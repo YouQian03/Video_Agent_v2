@@ -1,0 +1,1686 @@
+This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching these patterns are excluded: **/*.mp4, **/*.png, **/*.jpg, **/venv/**, **/.venv/**, **/__pycache__/**, **/.git/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+core/
+  __init__.py
+  changes.py
+  runner.py
+  workflow_io.py
+jobs/
+  demo_job_001/
+    storyboard.json
+    workflow.json
+outputs/
+  storyboard.json
+analyze_video.py
+apply_changes.py
+build_workflow.py
+extract_frames.py
+run_workflow.py
+smoke_test_core.py
+stylize_frames.py
+test_gemini.py
+video_generator.py
+workflow_cli.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="core/__init__.py">
+
+</file>
+
+<file path="core/changes.py">
+from typing import Optional
+
+def apply_global_style(wf: dict, new_style_prompt: str, cascade: bool = True) -> int:
+    wf.setdefault("global", {})["style_prompt"] = new_style_prompt
+
+    affected = 0
+    if cascade:
+        for shot in wf.get("shots", []):
+            shot.setdefault("status", {})["stylize"] = "NOT_STARTED"
+            shot.setdefault("status", {})["video_generate"] = "NOT_STARTED"
+            affected += 1
+    return affected
+
+def replace_entity_reference(wf: dict, entity_id: str, new_ref_image: str) -> int:
+    entities = wf.setdefault("entities", {})
+    if entity_id not in entities:
+        raise KeyError(f"entity 不存在：{entity_id}")
+
+    entities[entity_id]["reference_image"] = new_ref_image
+
+    affected = 0
+    for shot in wf.get("shots", []):
+        shot_entities = shot.get("entities", [])
+        if entity_id in shot_entities:
+            shot.setdefault("status", {})["stylize"] = "NOT_STARTED"
+            shot.setdefault("status", {})["video_generate"] = "NOT_STARTED"
+            affected += 1
+    return affected
+</file>
+
+<file path="core/workflow_io.py">
+import json
+from pathlib import Path
+
+def load_workflow(job_dir: Path) -> dict:
+    wf_path = job_dir / "workflow.json"
+    return json.loads(wf_path.read_text(encoding="utf-8"))
+
+def save_workflow(job_dir: Path, wf: dict) -> None:
+    wf_path = job_dir / "workflow.json"
+    wf_path.write_text(
+        json.dumps(wf, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+</file>
+
+<file path="jobs/demo_job_001/storyboard.json">
+[
+  {
+    "shot_number": 1,
+    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+    "content_analysis": "The focus is on the dog. The environment is domestic.",
+    "start_time": 0.0,
+    "end_time": 1.67,
+    "duration_seconds": 1.67,
+    "shot_type": "Medium Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
+    "lighting": "Natural indoor lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 2,
+    "frame_description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
+    "content_analysis": "The scene depicts a peaceful park setting with recreational activities.",
+    "start_time": 1.67,
+    "end_time": 4.34,
+    "duration_seconds": 2.67,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, everything in the shot is reasonably sharp",
+    "lighting": "Daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 3,
+    "frame_description": "A wide shot of a dark hill at night with some lights visible in the distance.",
+    "content_analysis": "The shot conveys a sense of darkness and a distant cityscape.",
+    "start_time": 4.34,
+    "end_time": 5.45,
+    "duration_seconds": 1.11,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, the hill and distant city are both clear",
+    "lighting": "Night time with limited artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 4,
+    "frame_description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
+    "content_analysis": "The scene showcases a coastal environment during twilight.",
+    "start_time": 5.45,
+    "end_time": 6.97,
+    "duration_seconds": 1.52,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, buildings and people are visible",
+    "lighting": "Sunset",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 5,
+    "frame_description": "A low angle shot of a grassy hill under a clear blue sky.",
+    "content_analysis": "The shot focuses on natural landscape elements.",
+    "start_time": 6.97,
+    "end_time": 8.18,
+    "duration_seconds": 1.21,
+    "shot_type": "Low Angle Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, grass and sky",
+    "lighting": "Daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 6,
+    "frame_description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
+    "content_analysis": "The scene shows buildings and a sky view in an urban area.",
+    "start_time": 8.18,
+    "end_time": 9.41,
+    "duration_seconds": 1.23,
+    "shot_type": "Low Angle Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, building and sky are clear",
+    "lighting": "Cloudy daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 7,
+    "frame_description": "A top-down shot looking down a staircase with a shadow of a person going down.",
+    "content_analysis": "The view shows the perspective of going down the stairs.",
+    "start_time": 9.41,
+    "end_time": 10.67,
+    "duration_seconds": 1.26,
+    "shot_type": "High Angle Shot",
+    "camera_angle": "High Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, stairs and shadow are clear",
+    "lighting": "Artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 8,
+    "frame_description": "Close up shot of a lizard on a white wall.",
+    "content_analysis": "The focus is on a lizard.",
+    "start_time": 10.67,
+    "end_time": 12.05,
+    "duration_seconds": 1.38,
+    "shot_type": "Close-up",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow depth of field, focus on the lizard",
+    "lighting": "Artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 9,
+    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+    "content_analysis": "The focus is on the dog. The environment is domestic.",
+    "start_time": 12.05,
+    "end_time": 13.43,
+    "duration_seconds": 1.38,
+    "shot_type": "Medium Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
+    "lighting": "Natural indoor lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  }
+]
+</file>
+
+<file path="outputs/storyboard.json">
+[
+  {
+    "shot_number": 1,
+    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+    "content_analysis": "The focus is on the dog. The environment is domestic.",
+    "start_time": 0.0,
+    "end_time": 1.67,
+    "duration_seconds": 1.67,
+    "shot_type": "Medium Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
+    "lighting": "Natural indoor lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 2,
+    "frame_description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
+    "content_analysis": "The scene depicts a peaceful park setting with recreational activities.",
+    "start_time": 1.67,
+    "end_time": 4.34,
+    "duration_seconds": 2.67,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, everything in the shot is reasonably sharp",
+    "lighting": "Daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 3,
+    "frame_description": "A wide shot of a dark hill at night with some lights visible in the distance.",
+    "content_analysis": "The shot conveys a sense of darkness and a distant cityscape.",
+    "start_time": 4.34,
+    "end_time": 5.45,
+    "duration_seconds": 1.11,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, the hill and distant city are both clear",
+    "lighting": "Night time with limited artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 4,
+    "frame_description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
+    "content_analysis": "The scene showcases a coastal environment during twilight.",
+    "start_time": 5.45,
+    "end_time": 6.97,
+    "duration_seconds": 1.52,
+    "shot_type": "Wide Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, buildings and people are visible",
+    "lighting": "Sunset",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 5,
+    "frame_description": "A low angle shot of a grassy hill under a clear blue sky.",
+    "content_analysis": "The shot focuses on natural landscape elements.",
+    "start_time": 6.97,
+    "end_time": 8.18,
+    "duration_seconds": 1.21,
+    "shot_type": "Low Angle Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, grass and sky",
+    "lighting": "Daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 6,
+    "frame_description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
+    "content_analysis": "The scene shows buildings and a sky view in an urban area.",
+    "start_time": 8.18,
+    "end_time": 9.41,
+    "duration_seconds": 1.23,
+    "shot_type": "Low Angle Shot",
+    "camera_angle": "Low Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, building and sky are clear",
+    "lighting": "Cloudy daylight",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 7,
+    "frame_description": "A top-down shot looking down a staircase with a shadow of a person going down.",
+    "content_analysis": "The view shows the perspective of going down the stairs.",
+    "start_time": 9.41,
+    "end_time": 10.67,
+    "duration_seconds": 1.26,
+    "shot_type": "High Angle Shot",
+    "camera_angle": "High Angle",
+    "camera_movement": "Static",
+    "focus_and_depth": "Deep focus, stairs and shadow are clear",
+    "lighting": "Artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 8,
+    "frame_description": "Close up shot of a lizard on a white wall.",
+    "content_analysis": "The focus is on a lizard.",
+    "start_time": 10.67,
+    "end_time": 12.05,
+    "duration_seconds": 1.38,
+    "shot_type": "Close-up",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow depth of field, focus on the lizard",
+    "lighting": "Artificial lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  },
+  {
+    "shot_number": 9,
+    "frame_description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+    "content_analysis": "The focus is on the dog. The environment is domestic.",
+    "start_time": 12.05,
+    "end_time": 13.43,
+    "duration_seconds": 1.38,
+    "shot_type": "Medium Shot",
+    "camera_angle": "Eye-Level",
+    "camera_movement": "Static",
+    "focus_and_depth": "Shallow Depth of Field, focus on the dog",
+    "lighting": "Natural indoor lighting",
+    "music_and_sound": "Song playing in background",
+    "voiceover": null
+  }
+]
+</file>
+
+<file path="analyze_video.py">
+import os
+import json
+import time
+from pathlib import Path
+from google import genai
+
+PROJECT_DIR = Path(__file__).parent
+VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
+OUT_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
+
+DIRECTOR_METAPROMPT = r"""
+请你扮演一位专业的影视分镜分析师，专注以「画面变化」为核心，
+将刚才的视频拆解为详细的分镜表。
+你必须严格按照JSON格式输出。
+根元素为包含多个分镜对象的JSON数组。
+每个对象包含：
+shot_number, frame_description, content_analysis,
+start_time, end_time, duration_seconds,
+shot_type, camera_angle, camera_movement,
+focus_and_depth, lighting, music_and_sound, voiceover。
+无信息请填 null。
+仅输出纯 JSON。
+""".strip()
+
+
+def ensure_api_key() -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "没有检测到 GEMINI_API_KEY 环境变量。\n"
+            "请在当前终端执行：\n"
+            '  export GEMINI_API_KEY="你的key"\n'
+            "然后再运行本脚本。"
+        )
+    return api_key
+
+
+def extract_json_array(text: str):
+    if not text:
+        raise ValueError("模型没有返回文本（response.text 为空）。")
+
+    s = text.strip()
+    if s.startswith("[") and s.endswith("]"):
+        return json.loads(s)
+
+    l = s.find("[")
+    r = s.rfind("]")
+    if l != -1 and r != -1 and r > l:
+        return json.loads(s[l : r + 1])
+
+    raise ValueError(
+        "未能从模型输出中提取 JSON 数组。\n"
+        "请把模型原始输出复制出来检查（它可能没有按要求输出 JSON）。"
+    )
+
+
+def wait_until_file_active(client: genai.Client, file_obj, timeout_s: int = 120, poll_s: int = 2):
+    """
+    Files API 上传后，文件可能处于 PROCESSING 状态，必须等到 ACTIVE 才能使用。
+    """
+    file_name = getattr(file_obj, "name", None)
+    if not file_name:
+        # 极少数情况下对象结构不同，直接返回试试
+        return file_obj
+
+    start = time.time()
+    last_state = None
+
+    while True:
+        f = client.files.get(name=file_name)
+        state = getattr(f, "state", None)
+
+        if state != last_state:
+            print(f"文件状态：{state}")
+            last_state = state
+
+        if state == "ACTIVE":
+            return f
+
+        if time.time() - start > timeout_s:
+            raise TimeoutError(
+                f"等待文件变为 ACTIVE 超时（>{timeout_s}s）。"
+                "你可以重试一次，或者换更小/更常见编码的 mp4。"
+            )
+
+        time.sleep(poll_s)
+
+
+def main():
+    api_key = ensure_api_key()
+
+    if not VIDEO_PATH.exists():
+        raise FileNotFoundError(
+            f"找不到视频文件：{VIDEO_PATH}\n"
+            "请确认你已把视频放到 downloads/ 里，并命名为 input.mp4"
+        )
+
+    size_mb = VIDEO_PATH.stat().st_size / (1024 * 1024)
+    print(f"准备处理视频：{VIDEO_PATH.name} ({size_mb:.1f} MB)")
+
+    client = genai.Client(api_key=api_key)
+
+    print("开始上传视频到 Files API…")
+    uploaded = client.files.upload(file=str(VIDEO_PATH))
+    print(f"✅ 上传完成：{uploaded.name}")
+
+    print("等待文件变为 ACTIVE…")
+    video_file = wait_until_file_active(client, uploaded, timeout_s=180, poll_s=2)
+    print("✅ 文件已 ACTIVE，可以开始分析")
+
+    print("开始分析视频（生成分镜 JSON）…")
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[DIRECTOR_METAPROMPT, video_file],
+    )
+
+    raw_text = getattr(response, "text", None) or ""
+    storyboard = extract_json_array(raw_text)
+
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUT_PATH.write_text(
+        json.dumps(storyboard, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print(f"\n✅ 已生成分镜 JSON：{OUT_PATH}")
+    print(f"分镜数量：{len(storyboard)}")
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="apply_changes.py">
+import json
+import argparse
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).parent
+DEFAULT_JOB_ID = "demo_job_001"
+
+def load_workflow(job_dir: Path) -> dict:
+    return json.loads((job_dir / "workflow.json").read_text(encoding="utf-8"))
+
+def save_workflow(job_dir: Path, wf: dict) -> None:
+    (job_dir / "workflow.json").write_text(json.dumps(wf, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def apply_global_style(wf: dict, new_style_prompt: str, cascade: bool = True) -> int:
+    """
+    修改全局风格，并级联使相关节点需要重跑。
+    cascade=True：把所有 shots 的 stylize & video_generate 重置为 NOT_STARTED
+    返回：受影响 shots 数量
+    """
+    wf.setdefault("global", {})["style_prompt"] = new_style_prompt
+
+    affected = 0
+    if cascade:
+        for shot in wf.get("shots", []):
+            # 风格改了，风格化图就应该重新生成（真实产品里可能有缓存策略，demo 先全重跑）
+            shot.setdefault("status", {})["stylize"] = "NOT_STARTED"
+            shot.setdefault("status", {})["video_generate"] = "NOT_STARTED"
+            affected += 1
+    return affected
+
+def replace_entity_reference(wf: dict, entity_id: str, new_ref_image: str) -> int:
+    """
+    替换某个 entity 的 reference_image，并只影响引用它的 shots：
+    - 标记 stylize / video_generate 为 NOT_STARTED
+    返回：受影响 shots 数量
+    """
+    entities = wf.setdefault("entities", {})
+    if entity_id not in entities:
+        raise KeyError(f"entity 不存在：{entity_id}")
+
+    entities[entity_id]["reference_image"] = new_ref_image
+
+    affected = 0
+    for shot in wf.get("shots", []):
+        shot_entities = shot.get("entities", [])
+        if entity_id in shot_entities:
+            shot.setdefault("status", {})["stylize"] = "NOT_STARTED"
+            shot.setdefault("status", {})["video_generate"] = "NOT_STARTED"
+            affected += 1
+    return affected
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job_id", default=DEFAULT_JOB_ID)
+    parser.add_argument("--set_global_style", default=None, help="设置新的 global.style_prompt")
+    parser.add_argument("--no_cascade", action="store_true", help="不触发级联重跑（默认会触发）")
+    parser.add_argument("--replace_entity", default=None, help="要替换的 entity_id，例如 entity_1")
+    parser.add_argument("--new_ref", default=None, help="新的 reference_image 路径，例如 stylized_frames/shot_02.png")
+
+    args = parser.parse_args()
+
+    job_dir = PROJECT_DIR / "jobs" / args.job_id
+    wf = load_workflow(job_dir)
+
+    if args.set_global_style is not None:
+        affected = apply_global_style(wf, args.set_global_style, cascade=(not args.no_cascade))
+        save_workflow(job_dir, wf)
+        print(f"✅ 已更新 global.style_prompt")
+        print(f"✅ 受影响 shots：{affected}（stylize/video_generate 已标记为 NOT_STARTED）")
+    else:
+        print("没有指定任何修改参数。示例：")
+        print('  python apply_changes.py --set_global_style "cinematic noir, high contrast"')
+    
+    if args.replace_entity and args.new_ref:
+        affected = replace_entity_reference(wf, args.replace_entity, args.new_ref)
+        save_workflow(job_dir, wf)
+        print(f"✅ 已替换 {args.replace_entity} 的 reference_image -> {args.new_ref}")
+        print(f"✅ 受影响 shots：{affected}（stylize/video_generate 已标记为 NOT_STARTED）")
+        return
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="build_workflow.py">
+import json
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).parent
+JOB_DIR = PROJECT_DIR / "jobs" / "demo_job_001"
+
+STORYBOARD_PATH = JOB_DIR / "storyboard.json"
+FRAMES_DIR = JOB_DIR / "frames"
+STYLIZED_DIR = JOB_DIR / "stylized_frames"
+WORKFLOW_PATH = JOB_DIR / "workflow.json"
+
+def to_seconds(t):
+    if t is None:
+        return None
+    if isinstance(t, (int, float)):
+        return float(t)
+    s = str(t).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    parts = s.split(":")
+    try:
+        parts = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if len(parts) == 3:
+        hh, mm, ss = parts
+        return hh * 3600 + mm * 60 + ss
+    if len(parts) == 2:
+        mm, ss = parts
+        return mm * 60 + ss
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+def main():
+    storyboard = json.loads(STORYBOARD_PATH.read_text(encoding="utf-8"))
+
+    shots = []
+    for s in storyboard:
+        shot_number = s.get("shot_number")
+        if shot_number is None:
+            continue
+        sid = f"shot_{int(shot_number):02d}"
+
+        start = to_seconds(s.get("start_time"))
+        end = to_seconds(s.get("end_time"))
+        desc = s.get("frame_description") or s.get("content_analysis") or ""
+
+        frame_path = f"frames/{sid}.png"
+        stylized_path = f"stylized_frames/{sid}.png"
+
+        shots.append({
+            "shot_id": sid,
+            "start_time": start,
+            "end_time": end,
+            "description": desc,
+            "voiceover": s.get("voiceover"),
+            "assets": {
+                "first_frame": frame_path if (JOB_DIR / frame_path).exists() else None,
+                "stylized_frame": stylized_path if (JOB_DIR / stylized_path).exists() else None,
+                "video": None
+            },
+            "status": {
+                "analyze": "SUCCESS",
+                "extract_frames": "SUCCESS",
+                "stylize": "SUCCESS",
+                "video_generate": "NOT_STARTED"
+            }
+        })
+
+    workflow = {
+        "job_id": "demo_job_001",
+        "source_video": "input.mp4",
+        "global": {
+            "aspect_ratio": "16:9",
+            "style_prompt": "de-replication stylization"
+        },
+        "entities": {},  # 先留空，后续我们加“人物/资产全局替换”
+        "shots": shots
+    }
+
+    WORKFLOW_PATH.write_text(json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"✅ workflow.json 已生成：{WORKFLOW_PATH}")
+    print(f"shots 数量：{len(shots)}")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="extract_frames.py">
+import json
+import subprocess
+from pathlib import Path
+
+PROJECT_DIR = Path(__file__).parent
+VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
+STORYBOARD_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
+FRAMES_DIR = PROJECT_DIR / "frames"
+
+def to_seconds(t):
+    if t is None:
+        return None
+    if isinstance(t, (int, float)):
+        return float(t)
+
+    s = str(t).strip()
+    if not s:
+        return None
+
+    try:
+        return float(s)
+    except ValueError:
+        pass
+
+    parts = s.split(":")
+    try:
+        parts = [float(p) for p in parts]
+    except ValueError:
+        return None
+
+    if len(parts) == 3:
+        hh, mm, ss = parts
+        return hh * 3600 + mm * 60 + ss
+    if len(parts) == 2:
+        mm, ss = parts
+        return mm * 60 + ss
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+def main():
+    if not VIDEO_PATH.exists():
+        raise FileNotFoundError(f"找不到视频：{VIDEO_PATH}")
+    if not STORYBOARD_PATH.exists():
+        raise FileNotFoundError(f"找不到 storyboard：{STORYBOARD_PATH}")
+
+    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+    storyboard = json.loads(STORYBOARD_PATH.read_text(encoding="utf-8"))
+    saved = 0
+
+    for shot in storyboard:
+        shot_num = shot.get("shot_number", saved + 1)
+        start_time = shot.get("start_time", None)
+        ts = to_seconds(start_time)
+
+        if ts is None:
+            continue
+
+        out_path = FRAMES_DIR / f"shot_{int(shot_num):02d}.png"
+
+        cmd = [
+            "/opt/homebrew/bin/ffmpeg",
+            "-y",
+            "-ss", str(ts),
+            "-i", str(VIDEO_PATH),
+            "-frames:v", "1",
+            "-q:v", "2",
+            str(out_path)
+        ]
+
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if out_path.exists():
+            saved += 1
+
+    print(f"✅ 截帧完成：{saved} 张，保存在 {FRAMES_DIR}")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="run_workflow.py">
+import json
+import argparse
+from pathlib import Path
+import shutil
+
+PROJECT_DIR = Path(__file__).parent
+DEFAULT_JOB_ID = "demo_job_001"
+
+def load_workflow(job_dir: Path) -> dict:
+    wf_path = job_dir / "workflow.json"
+    return json.loads(wf_path.read_text(encoding="utf-8"))
+
+def save_workflow(job_dir: Path, wf: dict) -> None:
+    wf_path = job_dir / "workflow.json"
+    wf_path.write_text(json.dumps(wf, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def find_shot(wf: dict, shot_id: str) -> dict | None:
+    for s in wf.get("shots", []):
+        if s.get("shot_id") == shot_id:
+            return s
+    return None
+
+def ensure_videos_dir(job_dir: Path) -> Path:
+    videos_dir = job_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+def mock_generate_video(job_dir: Path, shot: dict) -> str:
+    """
+    Demo 版本：生成一个“占位视频文件”，用来验证 runner 的工作方式。
+    后续接 Seedance/Veo 时，只需替换这个函数。
+    """
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+
+    # 用 input.mp4 的前 1 秒复制成一个小文件（确保是可播放 mp4）
+    src_video = job_dir / "input.mp4"
+    if not src_video.exists():
+        raise FileNotFoundError(f"找不到源视频：{src_video}")
+
+    # 直接复制会很大；为了快，我们复制一个小片段（用 ffmpeg）
+    # 你已经安装了 ffmpeg，但 PATH 可能不稳定，用绝对路径最稳
+    ffmpeg = "/opt/homebrew/bin/ffmpeg"
+
+    import subprocess
+    cmd = [
+        ffmpeg, "-y",
+        "-i", str(src_video),
+        "-t", "1.0",
+        "-c", "copy",
+        str(out_path)
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return f"videos/{out_path.name}"
+
+def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    """
+    执行 video_generate 节点：
+    - target_shot=None：跑所有 NOT_STARTED 或 FAILED 的 shot
+    - target_shot=shot_03：只跑指定 shot（单节点重跑）
+    """
+    shots = wf.get("shots", [])
+    for shot in shots:
+        sid = shot.get("shot_id")
+
+        if target_shot and sid != target_shot:
+            continue
+
+        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
+            continue
+
+        # 标记运行中
+        shot.setdefault("status", {})["video_generate"] = "RUNNING"
+        shot.setdefault("errors", {})["video_generate"] = None
+        save_workflow(job_dir, wf)
+
+        try:
+            rel_video_path = mock_generate_video(job_dir, shot)
+            shot.setdefault("assets", {})["video"] = rel_video_path
+            shot["status"]["video_generate"] = "SUCCESS"
+            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
+        except Exception as e:
+            shot["status"]["video_generate"] = "FAILED"
+            shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ video_generate FAILED: {sid} -> {e}")
+
+        save_workflow(job_dir, wf)
+
+def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
+    """
+    Demo 版风格化：把 first_frame 复制成新的 stylized_frame（覆盖写）。
+    后续接 Nano Banana 时，只替换这里。
+    """
+    src = job_dir / shot["assets"]["first_frame"]
+    if not src.exists():
+        raise FileNotFoundError(f"找不到 first_frame：{src}")
+
+    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    return f"stylized_frames/{dst.name}"
+
+def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots = wf.get("shots", [])
+    for shot in shots:
+        sid = shot.get("shot_id")
+
+        if target_shot and sid != target_shot:
+            continue
+
+        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
+            continue
+
+        shot.setdefault("status", {})["stylize"] = "RUNNING"
+        shot.setdefault("errors", {})["stylize"] = None
+        save_workflow(job_dir, wf)
+
+        try:
+            rel_path = mock_stylize_frame(job_dir, shot)
+            shot.setdefault("assets", {})["stylized_frame"] = rel_path
+            shot["status"]["stylize"] = "SUCCESS"
+            print(f"✅ stylize SUCCESS: {sid} -> {rel_path}")
+        except Exception as e:
+            shot["status"]["stylize"] = "FAILED"
+            shot.setdefault("errors", {})["stylize"] = str(e)
+            print(f"❌ stylize FAILED: {sid} -> {e}")
+
+        save_workflow(job_dir, wf)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job_id", default=DEFAULT_JOB_ID)
+    parser.add_argument("--node", choices=["video_generate"], default="video_generate")
+    parser.add_argument("--shot", default=None, help="只运行某个 shot，例如 shot_03")
+    args = parser.parse_args()
+
+    job_dir = PROJECT_DIR / "jobs" / args.job_id
+    if not job_dir.exists():
+        raise FileNotFoundError(f"找不到 job 目录：{job_dir}")
+
+    wf = load_workflow(job_dir)
+
+    if args.node == "video_generate":
+        # ① 先跑 stylize 节点
+        run_stylize(job_dir, wf, target_shot=args.shot)
+
+        # ② 重新加载 workflow（确保状态最新）
+        wf = load_workflow(job_dir)
+
+        # ③ 再跑 video_generate 节点
+        run_video_generate(job_dir, wf, target_shot=args.shot)
+
+
+    print("✅ runner 执行完成")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="smoke_test_core.py">
+from pathlib import Path
+from core.workflow_io import load_workflow, save_workflow
+from core.changes import replace_entity_reference
+from core.runner import run_pipeline
+
+JOB_DIR = Path("jobs/demo_job_001")
+
+def main():
+    wf = load_workflow(JOB_DIR)
+    print("✅ load_workflow ok, shots =", len(wf.get("shots", [])))
+
+    # 做一次无害的 entity reference 替换（换成自己已有的文件）
+    if "entity_1" in wf.get("entities", {}):
+        replace_entity_reference(wf, "entity_1", "stylized_frames/shot_03.png")
+        save_workflow(JOB_DIR, wf)
+        print("✅ replace_entity_reference ok")
+
+    # 跑 pipeline（会按 NOT_STARTED 执行）
+    run_pipeline(JOB_DIR)
+    print("✅ run_pipeline ok")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="stylize_frames.py">
+import os
+from pathlib import Path
+
+from google import genai
+from google.genai import types
+
+PROJECT_DIR = Path(__file__).parent
+FRAMES_DIR = PROJECT_DIR / "frames"
+OUT_DIR = PROJECT_DIR / "stylized_frames"
+OUT_DIR.mkdir(exist_ok=True)
+
+MODEL = "gemini-2.5-flash-image"  # Nano Banana（更快、更适合验证批量稳定性）
+# 如果你之后想用 Pro（更强、更贵）：MODEL = "gemini-3-pro-image-preview"
+
+PROMPT = """
+You are given a storyboard reference frame from a viral short video.
+
+Goal: "De-replication stylization" (same structure, new details).
+- Preserve: composition, camera angle, subject placement, overall color palette, lighting mood, and emotional tone.
+- Must change: all fine details must be newly designed (faces, clothing details, textures, materials, patterns, background objects, any text/logos).
+- Avoid pixel-level similarity. Do NOT copy any identifiable characters, logos, or exact text.
+- Keep it cinematic and coherent.
+
+Output:
+- 16:9 image
+- high clarity, rich details
+"""
+
+def save_first_image_from_response(response, out_path: Path) -> bool:
+    """
+    Nano Banana responses can include text parts and image parts.
+    We scan parts and save the first image we find.
+    """
+    for part in response.parts:
+        if part.inline_data is not None:
+            img = part.as_image()   # requires pillow
+            img.save(out_path)
+            return True
+    return False
+
+def main():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量（请先 export GEMINI_API_KEY=你的key）")
+
+    if not FRAMES_DIR.exists():
+        raise FileNotFoundError(f"找不到 frames 文件夹：{FRAMES_DIR}")
+
+    frame_paths = sorted(FRAMES_DIR.glob("shot_*.png"))
+    if not frame_paths:
+        raise FileNotFoundError(f"frames 里没有 shot_*.png：{FRAMES_DIR}")
+
+    client = genai.Client(api_key=api_key)
+
+    print(f"将处理 {len(frame_paths)} 张分镜图，输出到：{OUT_DIR}")
+
+    for img_path in frame_paths:
+        out_path = OUT_DIR / img_path.name
+
+        # 传入图片（官方推荐：types.Part.from_bytes）
+        image_part = types.Part.from_bytes(
+            data=img_path.read_bytes(),
+            mime_type="image/png",
+        )
+
+        print(f"🖼️  Stylize {img_path.name} ...")
+
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                image_part,
+                PROMPT
+            ],
+            # 可选：如果你用 gemini-3-pro-image-preview 想指定输出参数，可以打开下面 config
+            # config=types.GenerateContentConfig(
+            #     response_modalities=["TEXT", "IMAGE"],
+            #     image_config=types.ImageConfig(aspect_ratio="16:9", image_size="2K"),
+            # )
+        )
+
+        ok = save_first_image_from_response(response, out_path)
+        if ok:
+            print(f"✅ saved -> {out_path}")
+        else:
+            # 有时模型只回文字（表示没出图或被拒绝/降级），把文字打印出来便于你做可行性判断
+            print("⚠️ 没拿到图片输出，模型返回文本如下：")
+            print(response.text)
+
+    print("✅ 全部完成")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="test_gemini.py">
+import os
+from google import genai
+
+def main():
+    # 从环境变量中读取 API Key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量")
+
+    client = genai.Client(api_key=api_key)
+
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents="用一句话告诉我，你是谁？"
+    )
+
+    print("Gemini 回复：")
+    print(response.text)
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="video_generator.py">
+import os
+import time
+from google import genai
+from google.genai import types
+
+# 确保环境变量已加载
+api_key = os.environ.get("GEMINI_API_KEY")
+client = genai.Client(api_key=api_key)
+
+def run_veo_generation(shot_id, prompt, image_path, output_dir="output_videos"):
+    """
+    针对 2026 年 Gemini 3 / Veo 生态优化的视频生成函数
+    """
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # 1. 以二进制读取风格化后的参考图
+    try:
+        with open(image_path, 'rb') as f:
+            image_bytes = f.read()
+    except FileNotFoundError:
+        print(f"❌ 找不到图片文件: {image_path}")
+        return None
+
+    print(f"🚀 启动 Veo 3.1 任务 | 分镜: {shot_id}")
+    
+    try:
+        # 2. 调用专门的 generate_videos 接口
+        # 修复点：必须使用 generate_videos 而非 generate_content
+        operation = client.models.generate_videos(
+            model="veo-3.1-generate-preview",
+            prompt=prompt,
+            config=types.GenerateVideosConfig(
+                # 修复点：参考图必须放在这个 image 字段里
+                image=types.Part.from_bytes(
+                    data=image_bytes,
+                    mime_type="image/png"
+                ),
+                aspect_ratio="16:9"
+            )
+        )
+
+        # 3. 异步轮询 (Veo 视频生成不是即时的)
+        print(f"⏳ 视频正在云端渲染 (Operation ID: {operation.name})")
+        while not operation.done:
+            print(".", end="", flush=True)
+            time.sleep(10)  # 每 10 秒查询一次进度
+            operation = client.operations.get(operation.name)
+
+        # 4. 检查结果并保存
+        if operation.result and operation.result.generated_videos:
+            generated_video = operation.result.generated_videos[0]
+            output_path = os.path.join(output_dir, f"{shot_id}.mp4")
+            
+            # 使用 SDK 原生 save 方法
+            generated_video.video.save(output_path)
+            print(f"\n✅ 视频生成成功: {output_path}")
+            return output_path
+        else:
+            print(f"\n❌ 生成失败，原因: {operation.error}")
+            return None
+
+    except Exception as e:
+        print(f"\n❌ 调用 Veo API 出现严重异常: {str(e)}")
+        return None
+
+if __name__ == "__main__":
+    # 测试代码 (你可以直接运行 python video_generator.py 验证)
+    test_prompt = "A cinematic drone shot of a neon cyberpunk city in the rain."
+    test_image = "stylized_frames/shot_01.png"
+    run_veo_generation("shot_01", test_prompt, test_image)
+</file>
+
+<file path="workflow_cli.py">
+import argparse
+from pathlib import Path
+
+from core.workflow_io import load_workflow, save_workflow
+from core.changes import apply_global_style, replace_entity_reference
+from core.runner import run_pipeline
+
+DEFAULT_JOB_ID = "demo_job_001"
+PROJECT_DIR = Path(__file__).parent
+
+def job_dir_from_id(job_id: str) -> Path:
+    return PROJECT_DIR / "jobs" / job_id
+
+def cmd_list(job_dir: Path) -> None:
+    wf = load_workflow(job_dir)
+    print(f"job_id: {wf.get('job_id')}")
+    print(f"global.style_prompt: {wf.get('global', {}).get('style_prompt')}")
+    print("-" * 60)
+    for s in wf.get("shots", []):
+        sid = s.get("shot_id")
+        st = s.get("status", {})
+        print(f"{sid:7}  stylize={st.get('stylize')}  video={st.get('video_generate')}")
+
+def cmd_set_style(job_dir: Path, style: str, cascade: bool) -> None:
+    wf = load_workflow(job_dir)
+    affected = apply_global_style(wf, style, cascade=cascade)
+    save_workflow(job_dir, wf)
+    print(f"✅ style 已更新：{style}")
+    print(f"✅ 受影响 shots：{affected}（cascade={cascade}）")
+
+def cmd_replace_entity(job_dir: Path, entity_id: str, new_ref: str) -> None:
+    wf = load_workflow(job_dir)
+    affected = replace_entity_reference(wf, entity_id, new_ref)
+    save_workflow(job_dir, wf)
+    print(f"✅ 已替换 {entity_id}.reference_image -> {new_ref}")
+    print(f"✅ 受影响 shots：{affected}")
+
+def cmd_run(job_dir: Path, shot: str | None) -> None:
+    run_pipeline(job_dir, target_shot=shot)
+    print("✅ runner 执行完成")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job_id", default=DEFAULT_JOB_ID)
+
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_list = sub.add_parser("list", help="列出 shots 状态")
+    p_list.set_defaults(func="list")
+
+    p_style = sub.add_parser("set-style", help="设置全局 style_prompt")
+    p_style.add_argument("style")
+    p_style.add_argument("--no-cascade", action="store_true", help="不级联重跑（默认会级联）")
+    p_style.set_defaults(func="set-style")
+
+    p_ent = sub.add_parser("replace-entity", help="替换 entity 的 reference_image，并标记受影响 shots")
+    p_ent.add_argument("entity_id")
+    p_ent.add_argument("new_ref")
+    p_ent.set_defaults(func="replace-entity")
+
+    p_run = sub.add_parser("run", help="运行 runner（按 NOT_STARTED 执行）")
+    p_run.add_argument("--shot", default=None, help="只跑某个 shot，例如 shot_03")
+    p_run.set_defaults(func="run")
+
+    args = parser.parse_args()
+    job_dir = job_dir_from_id(args.job_id)
+    if not job_dir.exists():
+        raise FileNotFoundError(f"找不到 job 目录：{job_dir}")
+
+    if args.func == "list":
+        cmd_list(job_dir)
+    elif args.func == "set-style":
+        cmd_set_style(job_dir, args.style, cascade=(not args.no_cascade))
+    elif args.func == "replace-entity":
+        cmd_replace_entity(job_dir, args.entity_id, args.new_ref)
+    elif args.func == "run":
+        cmd_run(job_dir, args.shot)
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="core/runner.py">
+# core/runner.py
+from pathlib import Path
+import shutil
+import subprocess
+import time
+import os
+import requests 
+
+from .workflow_io import save_workflow, load_workflow
+
+
+def ensure_videos_dir(job_dir: Path) -> Path:
+    videos_dir = job_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+
+def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
+    src = job_dir / shot["assets"]["first_frame"]
+    if not src.exists():
+        raise FileNotFoundError(f"找不到 first_frame：{src}")
+
+    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    return f"stylized_frames/{dst.name}"
+
+
+def mock_generate_video(job_dir: Path, shot: dict) -> str:
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+    src_video = job_dir / "input.mp4"
+    if not src_video.exists():
+        raise FileNotFoundError(f"找不到源视频：{src_video}")
+    ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    cmd = [
+        ffmpeg, "-y",
+        "-i", str(src_video),
+        "-t", "1.0",
+        "-c", "copy",
+        str(out_path)
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return f"videos/{out_path.name}"
+
+
+def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
+    """
+    Veo 3.1 图生视频 - 最终修复版
+    1. 使用 v1alpha 生成（必须）
+    2. 使用 v1beta 下载（更稳定）
+    3. 使用 requests params 字典避免 URL 拼接错误
+    """
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量")
+
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+
+    img_rel = shot.get("assets", {}).get("stylized_frame")
+    if not img_rel:
+        raise RuntimeError("shot 缺少 assets.stylized_frame")
+    img_path = job_dir / img_rel
+
+    # 1. 初始化客户端 (生成阶段用 v1alpha)
+    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+
+    # 2. 发起 Veo 请求
+    print(f"🚀 发起 Veo 请求 (Shot: {shot['shot_id']})...")
+    operation = client.models.generate_videos(
+        model="veo-3.1-generate-preview", 
+        prompt=f"Cinematic video, {shot.get('description', '')}. Style: {wf.get('global', {}).get('style_prompt', '')}.",
+        image=types.Image(
+            image_bytes=img_path.read_bytes(),
+            mime_type="image/png"
+        ),
+        config=types.GenerateVideosConfig(
+            number_of_videos=1,
+            duration_seconds=6.0
+        ),
+    )
+
+    # 3. 轮询状态
+    print(f"⏳ 任务已提交，Veo 正在生成视频 (约 1-3 分钟)...")
+    while not operation.done:
+        time.sleep(20)
+        operation = client.operations.get(operation)
+        print(f"⏳ 仍在生成中...")
+
+    if operation.error:
+        raise RuntimeError(f"Veo 后端报错: {operation.error}")
+
+    # 4. 准备下载
+    resp = operation.response
+    video_obj = resp.generated_videos[0].video
+    
+    # file_id 通常是 "files/xxxx"
+    file_id = getattr(video_obj, 'name', None)
+    if not file_id and hasattr(video_obj, 'uri'):
+        file_id = f"files/{video_obj.uri.split('/')[-1]}"
+
+    if not file_id:
+        raise RuntimeError(f"无法定位生成的视频文件: {video_obj}")
+
+    # 5. 核心修复：使用 v1beta 端点和 requests 自动参数处理
+    print(f"✅ 生成成功，正在通过 v1beta 稳定端点下载视频...")
+    
+    # 使用 v1beta 往往能解决 alpha 端点的 alt=media 解析 Bug
+    download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
+    
+    # 使用 params 字典，requests 会自动处理成 ?alt=media&key=...
+    # 这种方式比字符串格式化更安全，不会出现 ? 和 & 混淆
+    query_params = {
+        'alt': 'media',
+        'key': api_key
+    }
+
+    try:
+        response = requests.get(download_url, params=query_params, stream=True)
+        
+        # 如果 v1beta 不通，再最后尝试一次 v1alpha
+        if response.status_code != 200:
+            print(f"⚠️ v1beta 下载失败 (Code: {response.status_code})，尝试 v1alpha...")
+            alpha_url = f"https://generativelanguage.googleapis.com/v1alpha/{file_id}"
+            response = requests.get(alpha_url, params=query_params, stream=True)
+
+        if response.status_code == 200:
+            with open(out_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024*1024): # 1MB chunks
+                    if chunk:
+                        f.write(chunk)
+            print(f"💾 视频生成并下载成功！本地路径: {out_path}")
+        else:
+            raise RuntimeError(f"下载依然失败。状态码: {response.status_code}, 详情: {response.text}")
+            
+    except Exception as e:
+        print(f"❌ 下载过程发生致命错误: {e}")
+        raise e
+
+    return f"videos/{out_path.name}"
+
+
+def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    for shot in wf.get("shots", []):
+        sid = shot.get("shot_id")
+        if target_shot and sid != target_shot: continue
+        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
+        shot.setdefault("status", {})["stylize"] = "RUNNING"
+        save_workflow(job_dir, wf)
+        try:
+            rel_path = mock_stylize_frame(job_dir, shot)
+            shot.setdefault("assets", {})["stylized_frame"] = rel_path
+            shot["status"]["stylize"] = "SUCCESS"
+            print(f"✅ stylize SUCCESS: {sid} -> {rel_path}")
+        except Exception as e:
+            shot["status"]["stylize"] = "FAILED"
+            shot.setdefault("errors", {})["stylize"] = str(e)
+            print(f"❌ stylize FAILED: {sid} -> {e}")
+        save_workflow(job_dir, wf)
+
+
+def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    for shot in wf.get("shots", []):
+        sid = shot.get("shot_id")
+        if target_shot and sid != target_shot: continue
+        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
+        shot.setdefault("status", {})["video_generate"] = "RUNNING"
+        save_workflow(job_dir, wf)
+        try:
+            video_model = wf.get("global", {}).get("video_model", "mock")
+            if video_model == "veo":
+                print("🔥 USING VEO PATH")
+                rel_video_path = veo_generate_video(job_dir, wf, shot)
+            else:
+                rel_video_path = mock_generate_video(job_dir, shot)
+            shot.setdefault("assets", {})["video"] = rel_video_path
+            shot["status"]["video_generate"] = "SUCCESS"
+            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
+        except Exception as e:
+            import traceback
+            shot["status"]["video_generate"] = "FAILED"
+            shot.setdefault("errors", {})["video_generate"] = repr(e)
+            print("❌ video_generate FAILED:")
+            traceback.print_exc()
+        save_workflow(job_dir, wf)
+
+
+def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
+    wf = load_workflow(job_dir)
+    run_stylize(job_dir, wf, target_shot=target_shot)
+    wf = load_workflow(job_dir)
+    run_video_generate(job_dir, wf, target_shot=target_shot)
+</file>
+
+<file path="jobs/demo_job_001/workflow.json">
+{
+  "job_id": "demo_job_001",
+  "source_video": "input.mp4",
+  "global": {
+    "aspect_ratio": "16:9",
+    "style_prompt": "cinematic noir, high contrast, moody lighting",
+    "video_model": "veo"
+  },
+  "entities": {
+    "entity_1": {
+      "type": "main_subject",
+      "name": "dog",
+      "reference_image": "stylized_frames/shot_02.png",
+      "notes": "demo entity for global replace"
+    }
+  },
+  "shots": [
+    {
+      "shot_id": "shot_01",
+      "start_time": 0.0,
+      "end_time": 1.67,
+      "description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+      "entities": [
+        "entity_1"
+      ],
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_01.png",
+        "stylized_frame": "stylized_frames/shot_01.png",
+        "video": "videos/shot_01.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": "RuntimeError('下载失败。状态码: 400, 详情: {\\n  \"error\": {\\n    \"code\": 400,\\n    \"message\": \"Invalid value \\\\\"media?key=AIzaSyBgDuk23TmU4r1Btgs8sjhhEiywhOn9NKg\\\\\" for query parameter \\'alt\\'\",\\n    \"status\": \"INVALID_ARGUMENT\"\\n  }\\n}\\n')",
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_02",
+      "start_time": 1.67,
+      "end_time": 4.34,
+      "description": "A wide shot of a park with children playing near a small body of water. There are buildings and trees in the background, shot during the daytime.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_02.png",
+        "stylized_frame": "stylized_frames/shot_02.png",
+        "video": "videos/shot_02.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_03",
+      "start_time": 4.34,
+      "end_time": 5.45,
+      "description": "A wide shot of a dark hill at night with some lights visible in the distance.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_03.png",
+        "stylized_frame": "stylized_frames/shot_03.png",
+        "video": "videos/shot_03.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_04",
+      "start_time": 5.45,
+      "end_time": 6.97,
+      "description": "A wide shot of a beach at sunset with silhouettes of people walking along the shore. Tall buildings are visible in the background.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_04.png",
+        "stylized_frame": "stylized_frames/shot_04.png",
+        "video": "videos/shot_04.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_05",
+      "start_time": 6.97,
+      "end_time": 8.18,
+      "description": "A low angle shot of a grassy hill under a clear blue sky.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_05.png",
+        "stylized_frame": "stylized_frames/shot_05.png",
+        "video": "videos/shot_05.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_06",
+      "start_time": 8.18,
+      "end_time": 9.41,
+      "description": "A view looking upwards towards buildings, a street lamp and sky. Cloudy sky partially obscuring buildings.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_06.png",
+        "stylized_frame": "stylized_frames/shot_06.png",
+        "video": "videos/shot_06.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_07",
+      "start_time": 9.41,
+      "end_time": 10.67,
+      "description": "A top-down shot looking down a staircase with a shadow of a person going down.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_07.png",
+        "stylized_frame": "stylized_frames/shot_07.png",
+        "video": "videos/shot_07.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_08",
+      "start_time": 10.67,
+      "end_time": 12.05,
+      "description": "Close up shot of a lizard on a white wall.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_08.png",
+        "stylized_frame": "stylized_frames/shot_08.png",
+        "video": "videos/shot_08.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    },
+    {
+      "shot_id": "shot_09",
+      "start_time": 12.05,
+      "end_time": 13.43,
+      "description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+      "voiceover": null,
+      "assets": {
+        "first_frame": "frames/shot_09.png",
+        "stylized_frame": "stylized_frames/shot_09.png",
+        "video": "videos/shot_09.mp4"
+      },
+      "status": {
+        "analyze": "SUCCESS",
+        "extract_frames": "SUCCESS",
+        "stylize": "SUCCESS",
+        "video_generate": "SUCCESS"
+      },
+      "errors": {
+        "video_generate": null,
+        "stylize": null
+      }
+    }
+  ]
+}
+</file>
+
+</files>

@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "cinematic noir, high contrast, moody lighting",
+    "style_prompt": "黑客帝国的感觉",
     "video_model": "veo"
   },
   "entities": {
@@ -54,8 +54,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -76,8 +76,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -98,8 +98,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -120,8 +120,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -142,8 +142,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -164,8 +164,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -186,8 +186,8 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -208,13 +208,16 @@
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
-        "stylize": "SUCCESS",
-        "video_generate": "SUCCESS"
+        "stylize": "NOT_STARTED",
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
         "stylize": null
       }
     }
-  ]
+  ],
+  "meta": {
+    "updated_at": "2026-01-12T05:57:37Z"
+  }
 }
