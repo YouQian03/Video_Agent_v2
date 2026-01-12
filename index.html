@@ -3,17 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 导演工作台 - 3形态合一版</title>
+    <title>AI 导演工作台 - 逻辑拆解版</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; }
-        .glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
-        .node-line { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-dasharray: 5; animation: dash 2s linear infinite; }
-        @keyframes dash { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+        .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .node-line { stroke: #334155; stroke-width: 2; fill: none; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
     </style>
@@ -27,18 +26,14 @@
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
             const [viewMode, setViewMode] = useState('grid'); 
-            const [messages, setMessages] = useState([{ role: 'ai', text: '导演您好！我是您的 Agent 指挥官。我可以一键修改全局风格，也可以帮您监控工作流状态。' }]);
+            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。工作流逻辑已就绪，等待指令。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
-            // 💡 引入一个本地时间戳，用于在重跑成功后强制刷新所有媒体资产
-            const [sessionTimestamp, setSessionTimestamp] = useState(Date.now());
 
             const fetchWorkflow = async () => {
-                try {
-                    const res = await fetch('/api/workflow');
-                    const data = await res.json();
-                    setWorkflow(data);
-                } catch (e) { console.error("Update failed", e); }
+                const res = await fetch('/api/workflow');
+                const data = await res.json();
+                setWorkflow(data);
             };
 
             useEffect(() => {
@@ -52,13 +47,8 @@
                 const msg = inputText; setInputText('');
                 setMessages(prev => [...prev, { role: 'user', text: msg }]);
                 setLoading(true);
-                await fetch('/api/agent/chat', { 
-                    method: 'POST', 
-                    headers: {'Content-Type': 'application/json'}, 
-                    body: JSON.stringify({ message: msg }) 
-                });
+                await fetch('/api/agent/chat', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ message: msg }) });
                 setLoading(false);
-                setSessionTimestamp(Date.now()); // 修改全局风格后，刷新预览
                 fetchWorkflow();
             };
 
@@ -73,84 +63,52 @@
 
             const runTask = async (type, shotId = null) => {
                 await fetch(`/api/run/${type}${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
-                // 触发任务时，先清空一下本地时间戳引用
-                setSessionTimestamp(Date.now());
             };
 
-            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">INITIATING CORE...</div>;
+            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">CONNECTING TO WORKFLOW...</div>;
 
             return (
                 <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden">
                     {/* Header */}
-                    <div className="glass rounded-2xl p-4 flex items-center justify-between">
+                    <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5">
                         <div className="flex items-center gap-6">
-                            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">AI DIRECTOR WORKSTATION</h1>
-                            <div className="flex bg-slate-900 rounded-lg p-1 border border-white/5">
-                                <button onClick={() => setViewMode('grid')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
-                                <button onClick={() => setViewMode('graph')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>GRAPH (工作流)</button>
+                            <h1 className="text-xl font-bold tracking-tight">AI CONTENT WORKSTATION</h1>
+                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10">
+                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
+                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>LOGIC GRAPH (工作流)</button>
                             </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="text-right">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Global Style</p>
-                                <p className="text-sm text-blue-400 font-mono">{workflow.global?.style_prompt || 'Default'}</p>
-                            </div>
-                            <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-bold shadow-lg transition-all">全量生成</button>
-                        </div>
+                        <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg">RUN ENTIRE WORKFLOW</button>
                     </div>
 
                     <div className="flex flex-1 gap-4 overflow-hidden">
-                        <div className="flex-1 glass rounded-3xl overflow-hidden relative border border-white/5">
-                            {viewMode === 'grid' ? (
-                                <div className="h-full overflow-y-auto p-6 custom-scrollbar">
-                                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-6">
+                        <div className="flex-1 glass rounded-3xl overflow-hidden relative border border-white/10 shadow-inner">
+                            
+                            {/* --- 形态 3：Higgsfield 网格 --- */}
+                            {viewMode === 'grid' && (
+                                <div className="h-full overflow-y-auto p-8 custom-scrollbar">
+                                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-8">
                                         {workflow.shots?.map(shot => {
                                             const isSuccess = shot.status?.video_generate === 'SUCCESS';
-                                            const isRunning = shot.status?.video_generate === 'RUNNING';
-                                            // 💡 这里的 cacheKey 非常关键，状态变绿或 attempts 变化时，都会强行销毁旧播放器
-                                            const cacheKey = `${shot.shot_id}-${shot.status?.video_generate}-${workflow.meta?.attempts || sessionTimestamp}`;
-                                            
                                             return (
-                                                <div key={shot.shot_id} className={`group glass rounded-2xl overflow-hidden border transition-all ${isSuccess ? 'border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : 'border-white/5'}`}>
-                                                    <div className="aspect-video bg-slate-900 relative">
+                                                <div key={shot.shot_id} className={`glass rounded-3xl overflow-hidden border transition-all ${isSuccess ? 'border-emerald-500/40' : 'border-white/5'}`}>
+                                                    <div className="aspect-video bg-black relative">
                                                         {isSuccess && shot.assets?.video ? (
-                                                            <video 
-                                                                key={cacheKey}
-                                                                src={`/assets/${shot.assets.video}?v=${cacheKey}`} 
-                                                                className="w-full h-full object-cover" 
-                                                                controls 
-                                                                preload="auto"
-                                                            />
+                                                            <video key={shot.status?.video_generate} src={`/assets/${shot.assets.video}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop />
                                                         ) : (
-                                                            <div className="w-full h-full relative">
-                                                                <img 
-                                                                    key={`${cacheKey}-img`}
-                                                                    src={`/assets/${shot.assets?.stylized_frame || shot.assets?.first_frame}?v=${cacheKey}`} 
-                                                                    className="w-full h-full object-cover opacity-40" 
-                                                                />
-                                                                {isRunning && (
-                                                                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-blue-900/20 backdrop-blur-sm">
-                                                                        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2"></div>
-                                                                        <span className="text-[10px] font-bold text-blue-400 tracking-tighter">RENDERING VIDEO</span>
-                                                                    </div>
-                                                                )}
-                                                            </div>
+                                                            <img src={`/assets/${shot.assets?.stylized_frame || shot.assets?.first_frame}`} className="w-full h-full object-cover opacity-50" />
                                                         )}
-                                                        <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded font-mono text-[10px] border border-white/10">{shot.shot_id}</div>
+                                                        <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full font-mono text-[10px]">{shot.shot_id}</div>
                                                     </div>
-                                                    <div className="p-4 flex flex-col gap-3">
+                                                    <div className="p-5 flex flex-col gap-4">
                                                         <textarea 
-                                                            className="w-full bg-slate-950/50 border border-transparent focus:border-blue-500/50 rounded-lg p-2 text-xs text-slate-300 outline-none resize-none h-16 transition-all"
+                                                            className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-xs text-slate-300 outline-none h-20"
                                                             defaultValue={shot.description}
                                                             onBlur={(e) => updateShot(shot.shot_id, e.target.value)}
                                                         />
                                                         <div className="flex justify-between items-center">
-                                                            <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter ${isSuccess ? 'text-emerald-400 bg-emerald-400/10' : 'text-blue-400 bg-blue-400/10'}`}>
-                                                                {shot.status?.video_generate}
-                                                            </span>
-                                                            <button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] font-semibold text-slate-500 hover:text-white transition-colors">
-                                                                重新绘制
-                                                            </button>
+                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${isSuccess ? 'text-emerald-400 bg-emerald-400/10' : 'text-blue-400 bg-blue-400/10'}`}>{shot.status?.video_generate}</span>
+                                                            <button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-slate-500 hover:text-white underline font-bold">RE-RENDER</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -158,67 +116,97 @@
                                         })}
                                     </div>
                                 </div>
-                            ) : (
-                                <div className="h-full relative overflow-hidden bg-slate-950/20">
-                                    <svg className="absolute inset-0 w-full h-full opacity-20">
-                                        {workflow.shots?.map((_, i) => (
-                                            <path key={i} d={`M 100 250 L 400 ${50 + i * 100}`} className="node-line" />
-                                        ))}
-                                    </svg>
-                                    <div className="absolute left-10 top-1/2 -translate-y-1/2 glass p-6 rounded-2xl border-blue-500/50 border-2 w-56">
-                                        <p className="text-[10px] font-bold text-blue-400 uppercase mb-2 tracking-widest font-bold">Global Style Node</p>
-                                        <p className="text-xs font-mono truncate">{workflow.global?.style_prompt}</p>
-                                    </div>
-                                    <div className="absolute left-[400px] top-5 flex flex-col gap-4 overflow-y-auto max-h-full p-4 custom-scrollbar">
-                                        {workflow.shots?.map(shot => (
-                                            <div key={shot.shot_id} className={`glass p-3 rounded-xl border w-64 transition-all ${shot.status?.video_generate === 'SUCCESS' ? 'border-emerald-500/50' : 'border-white/5'}`}>
-                                                <div className="flex gap-3 items-center">
-                                                    <div className="w-10 h-10 rounded bg-slate-900 overflow-hidden flex-shrink-0">
-                                                        <img src={`/assets/${shot.assets?.first_frame}?v=${sessionTimestamp}`} className="w-full h-full object-cover" />
-                                                    </div>
-                                                    <div className="overflow-hidden">
-                                                        <p className="text-[10px] font-bold text-slate-300">{shot.shot_id}</p>
-                                                        <p className="text-[8px] text-slate-500 truncate italic">"{shot.description}"</p>
-                                                    </div>
+                            )}
+
+                            {/* --- 形态 1：Roboneo 逻辑节点视图 (重点更新) --- */}
+                            {viewMode === 'graph' && (
+                                <div className="h-full relative overflow-hidden bg-slate-950 p-10 overflow-y-auto custom-scrollbar">
+                                    <div className="flex flex-col gap-16 relative z-10">
+                                        
+                                        {/* 全局输入源 */}
+                                        <div className="flex justify-center">
+                                            <div className="glass p-6 rounded-2xl border-2 border-blue-500/50 w-96 shadow-[0_0_20px_rgba(59,130,246,0.2)]">
+                                                <div className="flex items-center gap-3 mb-3 border-b border-white/10 pb-2">
+                                                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+                                                    <h3 className="text-xs font-black tracking-widest uppercase">Global Stylesheet (Input 1)</h3>
                                                 </div>
+                                                <p className="text-xs font-mono text-emerald-400">"{workflow.global?.style_prompt}"</p>
                                             </div>
-                                        ))}
+                                        </div>
+
+                                        {/* 分镜逻辑处理链 */}
+                                        <div className="space-y-12">
+                                            {workflow.shots?.map(shot => {
+                                                const isSuccess = shot.status?.video_generate === 'SUCCESS';
+                                                const isRunning = shot.status?.video_generate === 'RUNNING';
+                                                return (
+                                                    <div key={shot.shot_id} className="flex items-center justify-center gap-8">
+                                                        
+                                                        {/* Step 1: Input Combine */}
+                                                        <div className="w-64 glass p-4 rounded-xl border border-white/10 text-[10px]">
+                                                            <div className="text-slate-500 uppercase mb-2 font-bold tracking-tighter">Combine Inputs</div>
+                                                            <div className="bg-black/40 p-2 rounded mb-2 border border-white/5 truncate">G-Style: {workflow.global?.style_prompt}</div>
+                                                            <div className="bg-black/40 p-2 rounded border border-white/5 italic">S-Prompt: "{shot.description}"</div>
+                                                        </div>
+
+                                                        {/* Arrow */}
+                                                        <div className="text-slate-700">➜</div>
+
+                                                        {/* Step 2: AI Processor */}
+                                                        <div className={`w-48 glass p-4 rounded-xl border-2 flex flex-col items-center gap-2 ${isRunning ? 'border-blue-500 bg-blue-500/10 animate-pulse' : 'border-white/20'}`}>
+                                                            <div className="text-[10px] font-black uppercase text-slate-400">Processor</div>
+                                                            <div className="font-mono text-xs font-bold">Google Veo 3.1</div>
+                                                            <div className={`text-[8px] px-2 py-0.5 rounded ${isSuccess ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+                                                                {isSuccess ? 'COMPLETED' : isRunning ? 'RENDERING...' : 'READY'}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Arrow */}
+                                                        <div className="text-slate-700">➜</div>
+
+                                                        {/* Step 3: Output */}
+                                                        <div className={`w-56 glass p-2 rounded-xl border ${isSuccess ? 'border-emerald-500/50' : 'border-white/5'}`}>
+                                                            <div className="text-[9px] text-slate-500 uppercase mb-1 font-bold">Output Asset</div>
+                                                            <div className="aspect-video bg-black rounded-lg overflow-hidden relative border border-white/10">
+                                                                {isSuccess ? (
+                                                                    <video src={`/assets/${shot.assets.video}`} className="w-full h-full object-cover" autoPlay muted loop />
+                                                                ) : (
+                                                                    <div className="flex h-full items-center justify-center text-[8px] text-slate-600 font-mono italic px-4 text-center">
+                                                                        {shot.shot_id}.mp4 pending...
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
                                 </div>
                             )}
                         </div>
 
                         {/* 右侧 Agent */}
-                        <div className="w-80 flex flex-col gap-4">
-                            <div className="flex-1 glass rounded-3xl flex flex-col overflow-hidden border border-white/5">
-                                <div className="p-4 border-b border-white/5 bg-white/5 font-bold text-xs uppercase tracking-tighter flex items-center gap-2">
-                                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                                    Director Agent
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar text-xs">
-                                    {messages.map((m, i) => (
-                                        <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                            <div className={`max-w-[90%] p-3 rounded-2xl ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200 shadow-sm border border-white/5'}`}>
-                                                {m.text}
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {loading && <div className="text-[10px] text-slate-500 animate-pulse text-center font-mono uppercase">Syncing Workflow...</div>}
-                                </div>
-                                <div className="p-4 bg-slate-900/50 border-t border-white/5">
-                                    <div className="flex gap-2">
-                                        <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="输入全局指令..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-blue-500 outline-none text-white transition-all" />
-                                        <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-3 py-2 rounded-xl text-xs font-bold transition-all active:scale-95">发送</button>
-                                    </div>
-                                </div>
+                        <div className="w-80 flex flex-col glass rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
+                            <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
+                                <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">Agent Command Center</span>
+                                <span className="text-[10px] font-mono text-slate-500">v2.1</span>
                             </div>
-                            
-                            <div className="h-32 glass rounded-3xl p-4 font-mono text-[9px] text-slate-500 border border-white/5 overflow-hidden">
-                                <p className="text-blue-500 font-bold mb-1 uppercase tracking-widest">[Status Log]</p>
-                                <p>> Engine: Gemini-2.0-Flash</p>
-                                <p>> Update: {workflow.meta?.updated_at || 'Waiting...'}</p>
-                                <p>> Attempts: {workflow.meta?.attempts || 0}</p>
-                                <p className="text-emerald-500">> System status: ONLINE</p>
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950/20">
+                                {messages.map((m, i) => (
+                                    <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-[90%] p-3 rounded-2xl text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
+                                            {m.text}
+                                        </div>
+                                    </div>
+                                ))}
+                                {loading && <div className="text-[10px] text-slate-500 animate-pulse text-center font-mono">RE-COMPOSING WORKFLOW...</div>}
+                            </div>
+                            <div className="p-4 bg-slate-900/80 border-t border-white/10">
+                                <div className="flex gap-2">
+                                    <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="输入全局修改指令..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-blue-500 outline-none text-white" />
+                                    <button onClick={sendAgentMsg} className="bg-blue-600 px-4 py-2 rounded-xl text-xs font-bold">SEND</button>
+                                </div>
                             </div>
                         </div>
                     </div>

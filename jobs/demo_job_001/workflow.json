@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "简约线性动漫风",
+    "style_prompt": "手绘漫画风格",
     "video_model": "veo"
   },
   "entities": {
@@ -44,18 +44,18 @@
       "shot_id": "shot_02",
       "start_time": 1.67,
       "end_time": 4.34,
-      "description": "一只戴着粉色太阳镜的卡通狗在公园野餐",
+      "description": "一只跳起来和主人玩闹的狗狗",
       "voiceover": null,
       "assets": {
         "first_frame": "frames/shot_02.png",
         "stylized_frame": "stylized_frames/shot_02.png",
-        "video": null
+        "video": "videos/shot_02.mp4"
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "NOT_STARTED"
+        "video_generate": "SUCCESS"
       },
       "errors": {
         "video_generate": null,
@@ -93,13 +93,13 @@
       "assets": {
         "first_frame": "frames/shot_04.png",
         "stylized_frame": "stylized_frames/shot_04.png",
-        "video": "videos/shot_04.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "SUCCESS"
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -218,7 +218,7 @@
     }
   ],
   "meta": {
-    "updated_at": "2026-01-12T09:48:10Z",
+    "updated_at": "2026-01-12T10:02:42Z",
     "attempts": 6
   },
   "global_stages": {

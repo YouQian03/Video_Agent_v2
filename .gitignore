@@ -1,0 +1,17 @@
+# 忽略 Python 虚拟环境
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# 忽略敏感信息
+.env
+
+# 忽略生成的大型资源文件（只传代码，不传素材）
+jobs/
+downloads/
+outputs/
+frames/
+stylized_frames/
+all_code.txt
+repomix-output.xml
