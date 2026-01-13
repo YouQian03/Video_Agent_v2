@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 导演工作台 - 逻辑拆解版</title>
+    <title>AI 导演工作台 - 工业级放射流</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -12,23 +12,36 @@
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; }
         .glass { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
-        .node-line { stroke: #334155; stroke-width: 2; fill: none; }
+        
+        /* 💡 连线样式 */
+        .node-line { stroke: #3b82f6; stroke-width: 1.5; fill: none; stroke-opacity: 0.15; transition: stroke-opacity 0.3s; }
+        .node-line-active { stroke: #3b82f6; stroke-width: 2.5; stroke-dasharray: 6; animation: flow 1.5s linear infinite; stroke-opacity: 0.8; }
+        @keyframes flow { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+        
+        /* 固定行高，确保连线计算精准 */
+        .shot-row-container { height: 220px; display: flex; align-items: center; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         const App = () => {
             const [workflow, setWorkflow] = useState(null);
             const [viewMode, setViewMode] = useState('grid'); 
-            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。工作流逻辑已就绪，等待指令。' }]);
+            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。工作流已就绪。' }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
+            
+            // 💡 状态同步关键：记录滚动位置和容器高度
+            const scrollRef = useRef(null);
+            const [scrollTop, setScrollTop] = useState(0);
+            const [containerHeight, setContainerHeight] = useState(0);
 
             const fetchWorkflow = async () => {
                 const res = await fetch('/api/workflow');
@@ -41,6 +54,16 @@
                 const timer = setInterval(fetchWorkflow, 3000);
                 return () => clearInterval(timer);
             }, []);
+
+            // 💡 实时监听滚动
+            const onScroll = (e) => setScrollTop(e.target.scrollTop);
+
+            // 获取容器高度用于计算居中起点
+            useEffect(() => {
+                if (viewMode === 'graph' && scrollRef.current) {
+                    setContainerHeight(scrollRef.current.clientHeight);
+                }
+            }, [viewMode]);
 
             const sendAgentMsg = async () => {
                 if (!inputText.trim()) return;
@@ -65,51 +88,54 @@
                 await fetch(`/api/run/${type}${shotId ? `?shot_id=${shotId}` : ''}`, { method: 'POST' });
             };
 
-            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">CONNECTING TO WORKFLOW...</div>;
+            if (!workflow) return <div className="h-screen flex items-center justify-center font-mono">INITIATING...</div>;
 
             return (
                 <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden">
                     {/* Header */}
                     <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5">
                         <div className="flex items-center gap-6">
-                            <h1 className="text-xl font-bold tracking-tight">AI CONTENT WORKSTATION</h1>
-                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10">
-                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
-                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white' : 'text-slate-500'}`}>LOGIC GRAPH (工作流)</button>
+                            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent">AI CONTENT WORKSTATION</h1>
+                            <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
+                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (对比)</button>
+                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>LOGIC GRAPH (放射)</button>
                             </div>
                         </div>
-                        <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg">RUN ENTIRE WORKFLOW</button>
+                        <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg transition-all active:scale-95">RUN WORKFLOW</button>
                     </div>
 
                     <div className="flex flex-1 gap-4 overflow-hidden">
-                        <div className="flex-1 glass rounded-3xl overflow-hidden relative border border-white/10 shadow-inner">
+                        <div className="flex-1 glass rounded-[2.5rem] overflow-hidden relative border border-white/10 shadow-2xl bg-slate-950">
                             
-                            {/* --- 形态 3：Higgsfield 网格 --- */}
+                            {/* --- 视图 A：Storyboard 对比 --- */}
                             {viewMode === 'grid' && (
                                 <div className="h-full overflow-y-auto p-8 custom-scrollbar">
-                                    <div className="grid grid-cols-2 xl:grid-cols-3 gap-8">
+                                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                                         {workflow.shots?.map(shot => {
                                             const isSuccess = shot.status?.video_generate === 'SUCCESS';
                                             return (
-                                                <div key={shot.shot_id} className={`glass rounded-3xl overflow-hidden border transition-all ${isSuccess ? 'border-emerald-500/40' : 'border-white/5'}`}>
-                                                    <div className="aspect-video bg-black relative">
-                                                        {isSuccess && shot.assets?.video ? (
-                                                            <video key={shot.status?.video_generate} src={`/assets/${shot.assets.video}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop />
-                                                        ) : (
-                                                            <img src={`/assets/${shot.assets?.stylized_frame || shot.assets?.first_frame}`} className="w-full h-full object-cover opacity-50" />
-                                                        )}
-                                                        <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full font-mono text-[10px]">{shot.shot_id}</div>
+                                                <div key={shot.shot_id} className="glass rounded-3xl overflow-hidden border border-white/5 p-4 bg-slate-950/20">
+                                                    <div className="flex justify-between items-center mb-3">
+                                                        <span className="font-mono text-xs text-blue-400 font-bold uppercase tracking-widest">{shot.shot_id}</span>
+                                                        <span className="text-[10px] text-slate-500">{shot.start_time}s - {shot.end_time}s</span>
                                                     </div>
-                                                    <div className="p-5 flex flex-col gap-4">
-                                                        <textarea 
-                                                            className="w-full bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-xs text-slate-300 outline-none h-20"
-                                                            defaultValue={shot.description}
-                                                            onBlur={(e) => updateShot(shot.shot_id, e.target.value)}
-                                                        />
-                                                        <div className="flex justify-between items-center">
-                                                            <span className={`text-[10px] font-bold px-2 py-1 rounded uppercase ${isSuccess ? 'text-emerald-400 bg-emerald-400/10' : 'text-blue-400 bg-blue-400/10'}`}>{shot.status?.video_generate}</span>
-                                                            <button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-slate-500 hover:text-white underline font-bold">RE-RENDER</button>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="relative aspect-video rounded-xl overflow-hidden border border-white/10">
+                                                            <img src={`/assets/${shot.assets?.first_frame}`} className="w-full h-full object-cover" />
+                                                            <div className="absolute top-2 right-2 bg-red-500 text-[8px] px-1.5 py-0.5 font-black rounded text-white">SOURCE</div>
                                                         </div>
+                                                        <div className={`relative aspect-video rounded-xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40' : 'border-blue-500/20'}`}>
+                                                            {isSuccess && shot.assets?.video ? (
+                                                                <video src={`/assets/${shot.assets.video}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop />
+                                                            ) : (
+                                                                <div className="flex h-full items-center justify-center bg-slate-900 font-mono text-[9px] text-blue-400 tracking-widest animate-pulse">{shot.status?.video_generate}</div>
+                                                            )}
+                                                            <div className="absolute top-2 right-2 bg-blue-500 text-[8px] px-1.5 py-0.5 font-black rounded text-white uppercase tracking-tighter">AI OUTPUT</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="mt-4 p-3 bg-slate-900/50 rounded-2xl border border-white/5">
+                                                        <textarea className="w-full bg-transparent border-none text-xs text-slate-300 outline-none h-14 resize-none leading-relaxed italic" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
+                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[9px] text-emerald-400 font-bold uppercase tracking-widest hover:text-emerald-300 transition-colors">Re-Generate</button></div>
                                                     </div>
                                                 </div>
                                             );
@@ -118,62 +144,101 @@
                                 </div>
                             )}
 
-                            {/* --- 形态 1：Roboneo 逻辑节点视图 (重点更新) --- */}
+                            {/* --- 视图 B：真正的放射流图 (固定起点 + 动态连线) --- */}
                             {viewMode === 'graph' && (
-                                <div className="h-full relative overflow-hidden bg-slate-950 p-10 overflow-y-auto custom-scrollbar">
-                                    <div className="flex flex-col gap-16 relative z-10">
-                                        
-                                        {/* 全局输入源 */}
-                                        <div className="flex justify-center">
-                                            <div className="glass p-6 rounded-2xl border-2 border-blue-500/50 w-96 shadow-[0_0_20px_rgba(59,130,246,0.2)]">
-                                                <div className="flex items-center gap-3 mb-3 border-b border-white/10 pb-2">
-                                                    <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-                                                    <h3 className="text-xs font-black tracking-widest uppercase">Global Stylesheet (Input 1)</h3>
-                                                </div>
-                                                <p className="text-xs font-mono text-emerald-400">"{workflow.global?.style_prompt}"</p>
+                                <div className="h-full flex relative overflow-hidden">
+                                    
+                                    {/* 💡 1. 静态背景连线层 (固定在底层) */}
+                                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                                        {workflow.shots?.map((shot, i) => {
+                                            // 连线起点：左侧容器宽 350px，Master Source 在其垂直中心
+                                            const startX = 330; 
+                                            const startY = containerHeight / 2;
+                                            
+                                            // 连线终点：右侧分镜列表的每个 Shot 的左边缘中心
+                                            // 算法：初始偏移 40px + 索引 i * 行高 220px + 行高一半 110px - 滚动位移
+                                            const endX = 420;
+                                            const endY = (40 + i * 220 + 110) - scrollTop;
+                                            
+                                            // 如果终点超出了可见范围，淡化连线
+                                            const opacity = (endY < -50 || endY > containerHeight + 50) ? 0 : 1;
+
+                                            return (
+                                                <path key={i} 
+                                                    d={`M ${startX} ${startY} C ${startX + 40} ${startY}, ${endX - 40} ${endY}, ${endX} ${endY}`} 
+                                                    className={`node-line ${shot.status?.video_generate === 'RUNNING' || loading ? 'node-line-active' : ''}`}
+                                                    style={{ strokeOpacity: opacity * (shot.status?.video_generate === 'SUCCESS' ? 0.6 : 0.15) }}
+                                                />
+                                            );
+                                        })}
+                                    </svg>
+
+                                    {/* 💡 2. 左侧固定面板 (不滚动) */}
+                                    <div className="w-[350px] flex-shrink-0 flex items-center justify-center p-8 z-20 border-r border-white/5 relative bg-slate-950">
+                                        <div className="glass p-6 rounded-[2.5rem] border-2 border-red-500/40 w-full shadow-[0_0_50px_rgba(239,68,68,0.15)] relative">
+                                            {/* 物理发射孔 */}
+                                            <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 bg-red-500 rounded-full shadow-[0_0_15px_#ef4444]"></div>
+                                            
+                                            <div className="flex items-center gap-3 mb-4">
+                                                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                                                <h3 className="text-xs font-black tracking-widest uppercase text-red-500">Master Source</h3>
+                                            </div>
+                                            <div className="aspect-video bg-black rounded-2xl overflow-hidden mb-4 border border-white/10 flex items-center justify-center font-mono text-[10px] text-slate-500 italic text-center px-4">
+                                                {workflow.source_video}
+                                            </div>
+                                            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+                                                <p className="text-[9px] text-slate-500 uppercase font-black mb-1 tracking-widest">Decomposition Node</p>
+                                                <p className="text-[10px] text-emerald-400 font-mono italic leading-tight">Segmenting input into {workflow.shots?.length} parallel tasks...</p>
                                             </div>
                                         </div>
+                                    </div>
 
-                                        {/* 分镜逻辑处理链 */}
-                                        <div className="space-y-12">
-                                            {workflow.shots?.map(shot => {
+                                    {/* 💡 3. 右侧滚动列表 */}
+                                    <div 
+                                        className="flex-1 overflow-y-auto relative custom-scrollbar z-20" 
+                                        onScroll={onScroll}
+                                        ref={scrollRef}
+                                    >
+                                        <div className="py-10 pl-20 pr-10 space-y-0">
+                                            {workflow.shots?.map((shot, i) => {
                                                 const isSuccess = shot.status?.video_generate === 'SUCCESS';
                                                 const isRunning = shot.status?.video_generate === 'RUNNING';
                                                 return (
-                                                    <div key={shot.shot_id} className="flex items-center justify-center gap-8">
-                                                        
-                                                        {/* Step 1: Input Combine */}
-                                                        <div className="w-64 glass p-4 rounded-xl border border-white/10 text-[10px]">
-                                                            <div className="text-slate-500 uppercase mb-2 font-bold tracking-tighter">Combine Inputs</div>
-                                                            <div className="bg-black/40 p-2 rounded mb-2 border border-white/5 truncate">G-Style: {workflow.global?.style_prompt}</div>
-                                                            <div className="bg-black/40 p-2 rounded border border-white/5 italic">S-Prompt: "{shot.description}"</div>
-                                                        </div>
-
-                                                        {/* Arrow */}
-                                                        <div className="text-slate-700">➜</div>
-
-                                                        {/* Step 2: AI Processor */}
-                                                        <div className={`w-48 glass p-4 rounded-xl border-2 flex flex-col items-center gap-2 ${isRunning ? 'border-blue-500 bg-blue-500/10 animate-pulse' : 'border-white/20'}`}>
-                                                            <div className="text-[10px] font-black uppercase text-slate-400">Processor</div>
-                                                            <div className="font-mono text-xs font-bold">Google Veo 3.1</div>
-                                                            <div className={`text-[8px] px-2 py-0.5 rounded ${isSuccess ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
-                                                                {isSuccess ? 'COMPLETED' : isRunning ? 'RENDERING...' : 'READY'}
+                                                    <div key={shot.shot_id} className="shot-row-container gap-6">
+                                                        {/* 输入层 */}
+                                                        <div className="w-56 glass p-3 rounded-2xl border border-white/10 text-[9px] relative transition-all duration-500 group">
+                                                            {/* 连线接收孔 */}
+                                                            <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-blue-500 rounded-full shadow-[0_0_10px_#3b82f6]"></div>
+                                                            <div className="text-blue-400 font-black tracking-widest uppercase mb-2">Input: Shot #{i+1}</div>
+                                                            <div className="flex gap-2">
+                                                                <img src={`/assets/${shot.assets?.first_frame}`} className="w-12 h-12 rounded-lg object-cover border border-white/10 shadow-lg" />
+                                                                <div className="overflow-hidden">
+                                                                    <p className="text-slate-400 font-mono truncate">{workflow.global?.style_prompt}</p>
+                                                                    <p className="text-slate-500 italic truncate mt-1">"{shot.description}"</p>
+                                                                </div>
                                                             </div>
                                                         </div>
 
-                                                        {/* Arrow */}
-                                                        <div className="text-slate-700">➜</div>
+                                                        <div className="text-slate-700 font-bold opacity-30 italic">➜</div>
 
-                                                        {/* Step 3: Output */}
-                                                        <div className={`w-56 glass p-2 rounded-xl border ${isSuccess ? 'border-emerald-500/50' : 'border-white/5'}`}>
-                                                            <div className="text-[9px] text-slate-500 uppercase mb-1 font-bold">Output Asset</div>
-                                                            <div className="aspect-video bg-black rounded-lg overflow-hidden relative border border-white/10">
-                                                                {isSuccess ? (
+                                                        {/* 处理引擎 */}
+                                                        <div className={`w-40 glass p-3 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all duration-700 ${isRunning ? 'border-blue-500 bg-blue-500/10 scale-105' : isSuccess ? 'border-emerald-500/50' : 'border-white/10 opacity-40'}`}>
+                                                            <span className="text-[8px] text-slate-500 uppercase font-black tracking-tighter">AI Processor</span>
+                                                            <span className="text-[11px] font-bold font-mono">Veo 3.1</span>
+                                                            <span className={`text-[7px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${isSuccess ? 'bg-emerald-500/20 text-emerald-400' : isRunning ? 'bg-blue-500/20 text-blue-400 animate-pulse' : 'bg-slate-800 text-slate-500'}`}>
+                                                                {isSuccess ? 'COMPLETED' : isRunning ? 'WORKING' : 'WAITING'}
+                                                            </span>
+                                                        </div>
+
+                                                        <div className="text-slate-700 font-bold opacity-30 italic">➜</div>
+
+                                                        {/* 输出资源 */}
+                                                        <div className={`w-64 glass p-2 rounded-2xl border transition-all duration-700 ${isSuccess ? 'border-emerald-500/40 bg-emerald-500/5 shadow-2xl scale-105' : 'border-white/5 opacity-40'}`}>
+                                                            <div className="aspect-video bg-black rounded-xl overflow-hidden relative shadow-inner">
+                                                                {isSuccess && shot.assets.video ? (
                                                                     <video src={`/assets/${shot.assets.video}`} className="w-full h-full object-cover" autoPlay muted loop />
                                                                 ) : (
-                                                                    <div className="flex h-full items-center justify-center text-[8px] text-slate-600 font-mono italic px-4 text-center">
-                                                                        {shot.shot_id}.mp4 pending...
-                                                                    </div>
+                                                                    <div className="h-full flex items-center justify-center text-[8px] text-slate-700 italic font-mono uppercase tracking-widest">asset_pending.mp4</div>
                                                                 )}
                                                             </div>
                                                         </div>
@@ -186,26 +251,26 @@
                             )}
                         </div>
 
-                        {/* 右侧 Agent */}
-                        <div className="w-80 flex flex-col glass rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-                            <div className="p-4 border-b border-white/10 bg-white/5 flex items-center justify-between">
-                                <span className="text-xs font-bold uppercase tracking-widest text-emerald-400">Agent Command Center</span>
-                                <span className="text-[10px] font-mono text-slate-500">v2.1</span>
+                        {/* 右侧 Agent 交互 */}
+                        <div className="w-80 flex flex-col glass rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                            <div className="p-5 border-b border-white/5 bg-white/5 flex items-center gap-3">
+                                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_#10b981]"></div>
+                                <span className="text-xs font-black tracking-widest uppercase text-emerald-400 tracking-tighter">Director Agent</span>
                             </div>
-                            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-950/20">
+                            <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-slate-950/20 text-xs">
                                 {messages.map((m, i) => (
                                     <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-[90%] p-3 rounded-2xl text-xs leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-200'}`}>
+                                        <div className={`max-w-[90%] p-3.5 rounded-2xl shadow-sm leading-relaxed ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-white/5'}`}>
                                             {m.text}
                                         </div>
                                     </div>
                                 ))}
-                                {loading && <div className="text-[10px] text-slate-500 animate-pulse text-center font-mono">RE-COMPOSING WORKFLOW...</div>}
+                                {loading && <div className="text-[10px] text-slate-500 font-mono animate-pulse text-center uppercase tracking-widest mt-2">Updating Neural Graph...</div>}
                             </div>
-                            <div className="p-4 bg-slate-900/80 border-t border-white/10">
+                            <div className="p-5 bg-slate-900/80 border-t border-white/10">
                                 <div className="flex gap-2">
-                                    <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="输入全局修改指令..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-blue-500 outline-none text-white" />
-                                    <button onClick={sendAgentMsg} className="bg-blue-600 px-4 py-2 rounded-xl text-xs font-bold">SEND</button>
+                                    <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command Agent..." className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-4 py-2.5 text-xs outline-none focus:border-blue-500 text-white transition-all shadow-inner" />
+                                    <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-4 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all active:scale-95 shadow-lg shadow-blue-900/30">Send</button>
                                 </div>
                             </div>
                         </div>

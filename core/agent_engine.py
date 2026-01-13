@@ -1,8 +1,10 @@
 # core/agent_engine.py
 import os
 import json
+import re
 from google import genai
-from typing import Dict, Any
+from google.genai import types # 💡 引入类型定义
+from typing import Dict, Any, List, Union
 
 class AgentEngine:
     def __init__(self):
@@ -10,45 +12,43 @@ class AgentEngine:
         if not api_key:
             raise RuntimeError("未检测到 GEMINI_API_KEY")
         self.client = genai.Client(api_key=api_key)
-        # 修改这里：改为你环境里测试通过的 2.0 版本，这样最稳
         self.model_id = "gemini-2.0-flash" 
 
-    def get_action_from_text(self, user_input: str, workflow_summary: str) -> Dict[str, Any]:
-        """
-        将用户的自然语言转化为 WorkflowManager 的 Action JSON
-        """
+    def get_action_from_text(self, user_input: str, workflow_summary: str) -> Union[Dict, List]:
         system_prompt = f"""
-你是一个专业的视频制作助理。你的任务是分析用户的需求，并将其转化为对工作流的操作指令。
+你是一个专业的视频导演助理。你必须根据用户需求生成工作流修改指令。
 
-当前工作流摘要:
+[当前状态摘要]
 {workflow_summary}
 
-支持的操作指令 (Action JSON) 格式如下：
-1. 修改全局风格: {{"op": "set_global_style", "value": "风格描述词"}}
-2. 替换实体参考图: {{"op": "replace_entity_ref", "entity_id": "实体ID", "new_ref": "图片路径"}}
+[指令规范]
+1. 修改全局风格: {{"op": "set_global_style", "value": "英文风格词"}}
+2. 替换主体名词: {{"op": "global_subject_swap", "old_subject": "英文原词", "new_subject": "英文新词"}}
+   - 注意：你必须根据摘要识别描述中的英文原词（如: dog），并翻译用户的要求（如: 狗->dog, 猫->cat）。
 
-注意：
-- 只输出纯 JSON 格式，不要有任何 Markdown 代码块标签（如 ```json ）。
-- 如果用户说修改整体风格或画风，使用 set_global_style。
-- 如果用户提到修改具体的人物、动物或主体，使用 replace_entity_ref。
-- 如果无法匹配操作，请返回 {{"op": "none", "reason": "理由"}}。
+[输出要求]
+- 必须识别用户的所有意图。
+- 必须返回一个包含指令对象的列表 []。
+- 严禁输出任何解释性文字，只输出纯 JSON。
 """
-        
         try:
-            # 这里的调用方式保持不变
+            # 💡 核心升级：强迫模型输出符合 JSON 结构的格式
             response = self.client.models.generate_content(
                 model=self.model_id,
-                contents=[system_prompt, f"用户需求: {user_input}"]
+                contents=[system_prompt, f"用户指令: {user_input}"],
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json', # 👈 强制 JSON 模式
+                )
             )
             
-            text = response.text.strip()
+            # 直接解析，JSON 模式下模型返回的一定是合法的 JSON 字符串
+            res_json = json.loads(response.text)
+            print(f"🤖 Agent 决策结果: {res_json}")
+            return res_json
             
-            # 清洗 Gemini 偶尔会返回的 Markdown 标签
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
-                
-            return json.loads(text)
         except Exception as e:
-            return {"op": "error", "reason": f"解析失败: {str(e)}", "raw": response.text if 'response' in locals() else "No response"}
+            # 增加更详细的错误打印
+            print(f"❌ Agent 调用出现异常: {str(e)}")
+            if 'response' in locals() and hasattr(response, 'candidates'):
+                print(f"🔍 调试信息 - 停止原因: {response.candidates[0].finish_reason}")
+            return {"op": "error", "reason": str(e)}

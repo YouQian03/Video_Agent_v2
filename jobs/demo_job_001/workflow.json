@@ -3,7 +3,7 @@
   "source_video": "input.mp4",
   "global": {
     "aspect_ratio": "16:9",
-    "style_prompt": "手绘漫画风格",
+    "style_prompt": "cyberpunk",
     "video_model": "veo"
   },
   "entities": {
@@ -19,7 +19,7 @@
       "shot_id": "shot_01",
       "start_time": 0.0,
       "end_time": 1.67,
-      "description": "一只跳起来玩球的狗",
+      "description": "A cat jumping up to play with a ball",
       "entities": [
         "entity_1"
       ],
@@ -44,18 +44,18 @@
       "shot_id": "shot_02",
       "start_time": 1.67,
       "end_time": 4.34,
-      "description": "一只跳起来和主人玩闹的狗狗",
+      "description": "A cat eating its food",
       "voiceover": null,
       "assets": {
         "first_frame": "frames/shot_02.png",
         "stylized_frame": "stylized_frames/shot_02.png",
-        "video": "videos/shot_02.mp4"
+        "video": null
       },
       "status": {
         "analyze": "SUCCESS",
         "extract_frames": "SUCCESS",
         "stylize": "NOT_STARTED",
-        "video_generate": "SUCCESS"
+        "video_generate": "NOT_STARTED"
       },
       "errors": {
         "video_generate": null,
@@ -198,7 +198,7 @@
       "shot_id": "shot_09",
       "start_time": 12.05,
       "end_time": 13.43,
-      "description": "A medium shot of a small, fluffy, light-brown dog lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
+      "description": "A medium shot of a small, fluffy, light-brown cat lying on a wooden floor. Part of a blue water bottle is visible on the left edge of the frame.",
       "voiceover": null,
       "assets": {
         "first_frame": "frames/shot_09.png",
@@ -218,14 +218,14 @@
     }
   ],
   "meta": {
-    "updated_at": "2026-01-12T10:02:42Z",
+    "updated_at": "2026-01-13T07:13:58Z",
     "attempts": 6
   },
   "global_stages": {
     "analyze": "SUCCESS",
     "extract": "SUCCESS",
     "stylize": "NOT_STARTED",
-    "video_gen": "NOT_STARTED",
+    "video_gen": "RUNNING",
     "merge": "NOT_STARTED"
   }
 }
