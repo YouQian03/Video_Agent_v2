@@ -23,15 +23,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 2. 初始化核心引擎（注意：不再硬编码 JOB_ID）
-# 我们创建一个全局 manager 实例，它会随着上传动态切换 job_dir
+# 2. 初始化核心引擎
 manager = WorkflowManager() 
 agent = AgentEngine()
 
 # --- 数据模型 ---
 class ChatRequest(BaseModel):
     message: str
-    job_id: Optional[str] = None # 支持传入特定的 Job
+    job_id: Optional[str] = None 
 
 class ShotUpdateRequest(BaseModel):
     shot_id: str
@@ -45,25 +44,20 @@ class ShotUpdateRequest(BaseModel):
 async def read_index():
     return FileResponse('index.html')
 
-# 💡 核心新增：视频上传接口
 @app.post("/api/upload")
 async def upload_video(file: UploadFile = File(...)):
     print(f"📥 [收到文件] 正在接收上传: {file.filename}") 
     try:
-        # 1. 保存文件
         temp_dir = Path("temp_uploads")
         temp_dir.mkdir(exist_ok=True)
         temp_file_path = temp_dir / f"{uuid.uuid4()}_{file.filename}"
         
-        print(f"💾 [临时存储] 正在保存到: {temp_file_path}")
         with open(temp_file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # 2. 开始拆解（这里会卡 1-2 分钟）
         print(f"🧠 [AI 启动] 正在调用 Gemini 1.5 Pro 拆解分镜，请耐心等待...")
         new_job_id = manager.initialize_from_file(temp_file_path)
         
-        # 3. 清理
         if temp_file_path.exists():
             os.remove(temp_file_path)
             
@@ -77,10 +71,8 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.get("/api/workflow")
 async def get_workflow(job_id: Optional[str] = None):
-    """根据 job_id 获取状态"""
     target_id = job_id or manager.job_id
     if not target_id:
-        # 如果既没传 ID，manager 也没初始化过，尝试找最新的 job
         jobs_dir = Path("jobs")
         if jobs_dir.exists():
             existing_jobs = sorted([d.name for d in jobs_dir.iterdir() if d.is_dir()], reverse=True)
@@ -89,15 +81,12 @@ async def get_workflow(job_id: Optional[str] = None):
     if not target_id:
         return {"error": "No jobs found"}
         
-    # 动态切换 manager 的指向
     manager.job_id = target_id
     manager.job_dir = Path(__file__).parent / "jobs" / target_id
     return manager.load()
 
 @app.post("/api/agent/chat")
 async def agent_chat(req: ChatRequest):
-    """Agent 全局指挥"""
-    # 确保 manager 指向正确的 job
     if req.job_id: 
         manager.job_id = req.job_id
         manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
@@ -112,36 +101,39 @@ async def agent_chat(req: ChatRequest):
         return {"action": action, "result": res}
     return {"action": action, "result": {"status": "error"}}
 
-# 💡 核心修复：手动微调分镜接口
 @app.post("/api/shot/update")
 async def update_shot_params(req: ShotUpdateRequest):
-    """形态 3：手动微调单个分镜 (彻底修复保存逻辑)"""
     if req.job_id:
         manager.job_id = req.job_id
         manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
-    
-    # 确保加载了当前最新的数据
     manager.load()
-    
     action = {
         "op": "update_shot_params",
         "shot_id": req.shot_id,
         "description": req.description
     }
-    
     res = manager.apply_agent_action(action)
-    print(f"📝 手动精修保存：Job={manager.job_id}, Shot={req.shot_id}, Result={res}")
     return res
 
 @app.post("/api/run/{node_type}")
 async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None, job_id: Optional[str] = None):
-    # 确保指向正确的 job
+    # 💡 统一同步 manager 的 Job 指向
     if job_id:
         manager.job_id = job_id
         manager.job_dir = Path(__file__).parent / "jobs" / job_id
 
+    # 💡 核心新增：处理合并导出逻辑
+    if node_type == "merge":
+        print(f"🎬 收到合并请求，目标 Job: {manager.job_id}")
+        manager.load() # 确保状态最新
+        try:
+            result_file = manager.merge_videos()
+            return {"status": "success", "file": result_file, "job_id": manager.job_id}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     if node_type not in ["stylize", "video_generate"]:
-        raise HTTPException(status_code=400, detail="Invalid node")
+        raise HTTPException(status_code=400, detail="Invalid node type")
     
     background_tasks.add_task(manager.run_node, node_type, shot_id)
     return {"status": "started", "job_id": manager.job_id}
@@ -154,7 +146,6 @@ async def add_no_cache_header(request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
-# 挂载静态资源
 app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
 
 if __name__ == "__main__":

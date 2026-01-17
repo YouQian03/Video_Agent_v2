@@ -30,7 +30,7 @@ class WorkflowManager:
                 self.load()
 
     def initialize_from_file(self, temp_video_path: Path) -> str:
-        """全自动初始化管线"""
+        """全自动初始化管线：完成拆解与原始素材提取"""
         new_id = f"job_{uuid.uuid4().hex[:8]}"
         self.job_id = new_id
         self.job_dir = self.project_dir / "jobs" / new_id
@@ -39,6 +39,7 @@ class WorkflowManager:
         (self.job_dir / "frames").mkdir(exist_ok=True)
         (self.job_dir / "videos").mkdir(exist_ok=True)
         (self.job_dir / "source_segments").mkdir(exist_ok=True)
+        (self.job_dir / "stylized_frames").mkdir(exist_ok=True)
         
         final_video_path = self.job_dir / "input.mp4"
         shutil.move(str(temp_video_path), str(final_video_path))
@@ -62,10 +63,13 @@ class WorkflowManager:
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
                     "source_video_segment": f"source_segments/{sid}.mp4",
-                    "stylized_frame": f"frames/{sid}.png",
+                    "stylized_frame": None, # 💡 修正：必须为 None，强制触发 AI 生图流程
                     "video": None
                 },
-                "status": {"video_generate": "NOT_STARTED"}
+                "status": {
+                    "stylize": "NOT_STARTED",
+                    "video_generate": "NOT_STARTED"
+                }
             })
             
         self.workflow = {
@@ -115,17 +119,22 @@ class WorkflowManager:
         updated = False
         for shot in self.workflow.get("shots", []):
             sid = shot.get("shot_id")
-            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
             status_node = shot.get("status", {})
-            current_status = status_node.get("video_generate")
             
-            # 💡 只有在 RUNNING 状态下检测到新文件才变绿
-            if current_status == "RUNNING" and video_output_path.exists():
+            # 1. 风格化参考图物理对齐 (定妆图)
+            stylized_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+            if stylized_path.exists() and status_node.get("stylize") != "SUCCESS":
+                status_node["stylize"] = "SUCCESS"
+                shot["assets"]["stylized_frame"] = f"stylized_frames/{sid}.png"
+                updated = True
+
+            # 2. 视频产物物理对齐
+            video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
+            if video_output_path.exists() and status_node.get("video_generate") != "SUCCESS":
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
-            # 如果标记为成功但文件丢失，重置状态
-            elif current_status == "SUCCESS" and not video_output_path.exists():
+            elif status_node.get("video_generate") == "SUCCESS" and not video_output_path.exists():
                 status_node["video_generate"] = "NOT_STARTED"
                 shot.setdefault("assets", {})["video"] = None
                 updated = True
@@ -138,7 +147,7 @@ class WorkflowManager:
         save_workflow(self.job_dir, self.workflow)
 
     def apply_agent_action(self, action: Union[Dict, List]) -> Dict[str, Any]:
-        """处理 Agent 指令或手动精修指令"""
+        """处理修改意图：强制重置后续所有依赖节点"""
         actions = action if isinstance(action, list) else [action]
         total_affected = 0
         for act in actions:
@@ -148,10 +157,14 @@ class WorkflowManager:
                 affected = apply_global_style(self.workflow, act.get("value"), cascade=True)
                 if affected > 0:
                     for s in self.workflow.get("shots", []):
-                        # 💡 风格变了，物理删除旧视频，防止 load() 误判
                         v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
                         if v_path.exists(): os.remove(v_path)
-                        s.setdefault("assets", {})["video"] = None
+                        i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                        if i_path.exists(): os.remove(i_path)
+                        s["status"]["stylize"] = "NOT_STARTED"
+                        s["status"]["video_generate"] = "NOT_STARTED"
+                        s["assets"]["video"] = None
+                        s["assets"]["stylized_frame"] = None
                 total_affected += affected
                 
             elif op == "global_subject_swap":
@@ -161,11 +174,16 @@ class WorkflowManager:
                     for s in self.workflow.get("shots", []):
                         if old_s in s["description"].lower():
                             s["description"] = re.sub(old_s, new_s, s["description"], flags=re.IGNORECASE)
+                            s["status"]["stylize"] = "NOT_STARTED"
                             s["status"]["video_generate"] = "NOT_STARTED"
-                            # 💡 内容变了，物理删除旧视频
+                            
                             v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
                             if v_path.exists(): os.remove(v_path)
+                            i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                            if i_path.exists(): os.remove(i_path)
+                            
                             s["assets"]["video"] = None
+                            s["assets"]["stylized_frame"] = None
                             total_affected += 1
                             
             elif op == "update_shot_params":
@@ -173,11 +191,14 @@ class WorkflowManager:
                 for s in self.workflow.get("shots", []):
                     if s["shot_id"] == sid:
                         if "description" in act: s["description"] = act["description"]
+                        s["status"]["stylize"] = "NOT_STARTED"
                         s["status"]["video_generate"] = "NOT_STARTED"
-                        # 💡 手动精修了，物理删除旧视频，确保保存生效
                         v_path = self.job_dir / "videos" / f"{sid}.mp4"
                         if v_path.exists(): os.remove(v_path)
+                        i_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+                        if i_path.exists(): os.remove(i_path)
                         s["assets"]["video"] = None
+                        s["assets"]["stylized_frame"] = None
                         total_affected += 1
                         break
                         
@@ -185,25 +206,75 @@ class WorkflowManager:
         return {"status": "success", "affected_shots": total_affected}
 
     def run_node(self, node_type: str, shot_id: Optional[str] = None):
-        """执行工作流节点"""
-        self.workflow["global_stages"]["video_gen"] = "RUNNING"
+        """💡 核心重组：逻辑编排引擎。确保‘先有图，后有视频’且无死锁"""
         self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
         self.workflow["meta"]["attempts"] += 1
         
+        # 1. 确定本次操作影响的范围
+        target_shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
+
+        # 2. 依赖项检查：如果要生视频，必须确保风格化图已存在且成功
         if node_type == "video_generate":
-            shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
-            for s in shots:
-                video_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
-                if video_file.exists(): os.remove(video_file)
-                s["status"]["video_generate"] = "RUNNING"
+            for s in target_shots:
+                if s["status"].get("stylize") != "SUCCESS":
+                    print(f"🔗 [Dependency] 分镜 {s['shot_id']} 缺少定妆图，正在前置生成...")
+                    # 直接调用 runner 中的风格化方法
+                    run_stylize(self.job_dir, self.workflow, target_shot=s["shot_id"])
+                    # 重新加载确认产物
+                    i_file = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                    if i_file.exists(): 
+                        s["status"]["stylize"] = "SUCCESS"
+                        s["assets"]["stylized_frame"] = f"stylized_frames/{s['shot_id']}.png"
+
+        # 3. 准备执行
+        stage_key = "video_gen" if node_type == "video_generate" else "stylize"
+        self.workflow["global_stages"][stage_key] = "RUNNING"
+
+        for s in target_shots:
+            if node_type == "video_generate":
+                v_file = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                if v_file.exists(): os.remove(v_file)
+                s["status"]["video_generate"] = "NOT_STARTED" 
                 s["assets"]["video"] = None
+            elif node_type == "stylize":
+                i_file = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                if i_file.exists(): os.remove(i_file)
+                s["status"]["stylize"] = "NOT_STARTED" 
+                s["assets"]["stylized_frame"] = None
 
         self.save()
-        if node_type == "stylize": run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
-        elif node_type == "video_generate": run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
-        self.load()
+
+        # 4. 正式调用 Runner
+        if node_type == "stylize": 
+            run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
+        elif node_type == "video_generate": 
+            run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
+        
+        self.load() 
 
     def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
         for s in self.workflow.get("shots", []):
             if s.get("shot_id") == shot_id: return s
         return None
+
+    def merge_videos(self) -> str:
+        """执行无损合并"""
+        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+        success_shots = [s for s in self.workflow.get("shots", []) if s["status"].get("video_generate") == "SUCCESS"]
+        if not success_shots: raise RuntimeError("没有可合并的分镜视频。")
+        success_shots.sort(key=lambda x: x["shot_id"])
+        concat_list_path = self.job_dir / "concat_list.txt"
+        output_video_path = self.job_dir / "final_output.mp4"
+        with open(concat_list_path, "w", encoding="utf-8") as f:
+            for s in success_shots:
+                v_rel_path = s["assets"].get("video")
+                if v_rel_path:
+                    abs_v_path = (self.job_dir / v_rel_path).absolute()
+                    f.write(f"file '{abs_v_path}'\n")
+        cmd = [ffmpeg_path, "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list_path), "-c", "copy", str(output_video_path)]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0: raise RuntimeError(f"合并失败: {result.stderr}")
+        if "global_stages" in self.workflow:
+            self.workflow["global_stages"]["merge"] = "SUCCESS"
+        self.save()
+        return "final_output.mp4"
