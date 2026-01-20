@@ -1232,6 +1232,7 @@ app.add_middleware(
 )
 
 # 2. 初始化核心引擎
+# 创建全局 manager 实例
 manager = WorkflowManager() 
 agent = AgentEngine()
 
@@ -1279,6 +1280,7 @@ async def upload_video(file: UploadFile = File(...)):
 
 @app.get("/api/workflow")
 async def get_workflow(job_id: Optional[str] = None):
+    """获取最新全局状态"""
     target_id = job_id or manager.job_id
     if not target_id:
         jobs_dir = Path("jobs")
@@ -1289,17 +1291,21 @@ async def get_workflow(job_id: Optional[str] = None):
     if not target_id:
         return {"error": "No jobs found"}
         
+    # 动态同步状态
     manager.job_id = target_id
-    manager.job_dir = Path(__file__).parent / "jobs" / target_id
+    manager.job_dir = Path("jobs") / target_id
     return manager.load()
 
 @app.post("/api/agent/chat")
 async def agent_chat(req: ChatRequest):
+    """Agent 全局指挥"""
     if req.job_id: 
         manager.job_id = req.job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
+        manager.job_dir = Path("jobs") / req.job_id
         
+    # 先同步磁盘数据到内存
     wf = manager.load()
+    
     example_desc = wf.get("shots")[0].get("description", "") if wf.get("shots") else ""
     summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\nSample Desc: {example_desc}"
     
@@ -1311,29 +1317,32 @@ async def agent_chat(req: ChatRequest):
 
 @app.post("/api/shot/update")
 async def update_shot_params(req: ShotUpdateRequest):
+    """形态 3：手动微调单个分镜 - 修复保存逻辑"""
     if req.job_id:
         manager.job_id = req.job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / req.job_id
+        manager.job_dir = Path("jobs") / req.job_id
+    
+    # 💡 核心修复：修改前必须强制加载该 job 的最新磁盘数据，防止版本覆盖
     manager.load()
+    
     action = {
         "op": "update_shot_params",
         "shot_id": req.shot_id,
         "description": req.description
     }
+    
     res = manager.apply_agent_action(action)
     return res
 
 @app.post("/api/run/{node_type}")
 async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None, job_id: Optional[str] = None):
-    # 💡 统一同步 manager 的 Job 指向
     if job_id:
         manager.job_id = job_id
-        manager.job_dir = Path(__file__).parent / "jobs" / job_id
+        manager.job_dir = Path("jobs") / job_id
 
-    # 💡 核心新增：处理合并导出逻辑
+    # 处理合并导出逻辑
     if node_type == "merge":
-        print(f"🎬 收到合并请求，目标 Job: {manager.job_id}")
-        manager.load() # 确保状态最新
+        manager.load()
         try:
             result_file = manager.merge_videos()
             return {"status": "success", "file": result_file, "job_id": manager.job_id}
@@ -1346,18 +1355,22 @@ async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: O
     background_tasks.add_task(manager.run_node, node_type, shot_id)
     return {"status": "started", "job_id": manager.job_id}
 
-# --- 核心：防缓存与资源映射 ---
+# --- 核心：防缓存中间件 ---
 @app.middleware("http")
 async def add_no_cache_header(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith("/assets"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
     return response
 
+# 挂载静态资源目录
 app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
 
 if __name__ == "__main__":
     import uvicorn
+    # 启动服务
     uvicorn.run(app, host="0.0.0.0", port=8000)
 </file>
 
@@ -1383,20 +1396,18 @@ def ensure_videos_dir(job_dir: Path) -> Path:
 
 def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     """
-    💡 终极修复：使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
+    💡 使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
     """
     from google import genai
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
-    # Imagen 4.0 和 Gemini 2.0 集成生图通常在 v1beta 或 v1 接口中更稳定
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
     
     src = job_dir / shot["assets"]["first_frame"]
     dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
     dst.parent.mkdir(parents=True, exist_ok=True)
 
-    # 物理清场
     if dst.exists(): os.remove(dst)
 
     global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
@@ -1405,7 +1416,6 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
 
     print(f"🖼️  AI 正在尝试生成定妆图: {shot['shot_id']}")
 
-    # 💡 策略 1：使用你列表里存在的 Imagen 4.0
     try:
         print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
         response = client.models.generate_images(
@@ -1427,10 +1437,8 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     except Exception as e:
         print(f"⚠️ Imagen 4.0 调用失败: {str(e)[:100]}...")
 
-    # 💡 策略 2：使用你列表里的 Gemini 2.0 集成生图模型 (这种方式通常不会 404)
     try:
         print(f"📡 尝试调用集成生图模型 (models/gemini-2.0-flash-exp-image-generation)...")
-        # 这种模型支持 Image 模态，通过 generate_content 调用
         response = client.models.generate_content(
             model="models/gemini-2.0-flash-exp-image-generation",
             contents=prompt,
@@ -1447,7 +1455,6 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     except Exception as e:
         print(f"❌ 所有生图模型均失败: {str(e)[:100]}...")
 
-    # 兜底逻辑
     print("⚠️ 执行原图占位。")
     shutil.copyfile(src, dst)
     return f"stylized_frames/{dst.name}"
@@ -1469,7 +1476,6 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
-    # Veo 3.1 渲染通常需要 v1alpha 接口
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
 
     videos_dir = ensure_videos_dir(job_dir)
@@ -1479,7 +1485,6 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     img_rel = shot.get("assets", {}).get("stylized_frame") or f"stylized_frames/{shot['shot_id']}.png"
     img_path = job_dir / img_rel
 
-    # 依赖检查
     if not img_path.exists():
         ai_stylize_frame(job_dir, wf, shot)
 
@@ -1501,13 +1506,39 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
         while not operation.done:
             time.sleep(20)
-            operation = client.operations.get(operation)
+            operation = client.operations.get(operation.name)
             print(f"⏳ 视频渲染中...")
 
-        video_obj = operation.response.generated_videos[0].video
-        file_id = getattr(video_obj, 'name', None) or f"files/{video_obj.uri.split('/')[-1]}"
+        if operation.error:
+            raise RuntimeError(f"Veo 后端报错: {operation.error}")
+
+        resp = operation.response
+        if resp is None or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
+            raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
+
+        # 💡 核心修复：处理 video 字段可能是 str 也可能是 Object 的情况
+        video_output = resp.generated_videos[0].video
+        file_id = None
         
-        # 使用 v1beta 稳定端点下载
+        if isinstance(video_output, str):
+            # 如果直接返回的是字符串 ID
+            file_id = video_output
+        else:
+            # 如果返回的是对象，尝试多种取值方式
+            file_id = getattr(video_output, 'name', None)
+            if not file_id and hasattr(video_output, 'uri'):
+                # 兼容 URI 格式: https://.../files/xyz -> files/xyz
+                file_id = f"files/{video_output.uri.split('/')[-1]}"
+        
+        if not file_id:
+            raise RuntimeError(f"无法从响应中解析有效的 File ID: {video_output}")
+
+        # 确保 ID 格式正确 (必须包含 files/ 前缀)
+        if '/' not in file_id:
+            file_id = f"files/{file_id}"
+
+        print(f"✅ 生成成功，正在下载文件: {file_id}")
+        
         download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
         query_params = {'alt': 'media', 'key': api_key}
         response = requests.get(download_url, params=query_params, stream=True)
@@ -1518,9 +1549,9 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             print(f"💾 视频生成成功: {out_path}")
             return f"videos/{out_path.name}"
         else:
-            raise RuntimeError(f"下载失败: {response.status_code}")
+            raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
     except Exception as e:
-        print(f"❌ Veo 失败: {e}")
+        print(f"❌ Veo 失败: {str(e)}")
         raise e
 
 
@@ -1565,6 +1596,7 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         except Exception as e:
             shot["status"]["video_generate"] = "FAILED"
             shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ Video FAILED: {sid} -> {e}")
         save_workflow(job_dir, wf)
 
 
@@ -1641,7 +1673,7 @@ class WorkflowManager:
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
                     "source_video_segment": f"source_segments/{sid}.mp4",
-                    "stylized_frame": None, # 💡 修正：必须为 None，强制触发 AI 生图流程
+                    "stylized_frame": None, # 💡 PM逻辑：初始化为空，强制触发 AI 生图流程
                     "video": None
                 },
                 "status": {
@@ -1695,11 +1727,12 @@ class WorkflowManager:
             self.workflow["global_stages"] = {"analyze": "SUCCESS", "extract": "SUCCESS", "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"}
 
         updated = False
-        for shot in self.workflow.get("shots", []):
+        shots = self.workflow.get("shots", [])
+        for shot in shots:
             sid = shot.get("shot_id")
             status_node = shot.get("status", {})
             
-            # 1. 风格化参考图物理对齐 (定妆图)
+            # 1. 风格化参考图物理对齐
             stylized_path = self.job_dir / "stylized_frames" / f"{sid}.png"
             if stylized_path.exists() and status_node.get("stylize") != "SUCCESS":
                 status_node["stylize"] = "SUCCESS"
@@ -1708,14 +1741,33 @@ class WorkflowManager:
 
             # 2. 视频产物物理对齐
             video_output_path = self.job_dir / "videos" / f"{sid}.mp4"
-            if video_output_path.exists() and status_node.get("video_generate") != "SUCCESS":
+            current_video_status = status_node.get("video_generate")
+            if video_output_path.exists() and current_video_status != "SUCCESS":
                 status_node["video_generate"] = "SUCCESS"
                 shot.setdefault("assets", {})["video"] = f"videos/{sid}.mp4"
                 updated = True
-            elif status_node.get("video_generate") == "SUCCESS" and not video_output_path.exists():
+            elif not video_output_path.exists() and current_video_status == "SUCCESS":
                 status_node["video_generate"] = "NOT_STARTED"
                 shot.setdefault("assets", {})["video"] = None
                 updated = True
+        
+        # 💡 核心新增：计算合并就绪状态统计
+        failed_count = sum(1 for s in shots if s["status"].get("video_generate") == "FAILED")
+        pending_count = sum(1 for s in shots if s["status"].get("video_generate") in ["NOT_STARTED", "RUNNING"])
+        
+        self.workflow["merge_info"] = {
+            "can_merge": failed_count == 0 and pending_count == 0 and len(shots) > 0,
+            "failed_count": failed_count,
+            "pending_count": pending_count,
+            "message": ""
+        }
+        
+        if failed_count > 0:
+            self.workflow["merge_info"]["message"] = f"⚠️ 有 {failed_count} 个分镜失败，无法拼合"
+        elif pending_count > 0:
+            self.workflow["merge_info"]["message"] = "⏳ 正在等待分镜生成完成..."
+        elif len(shots) > 0:
+            self.workflow["merge_info"]["message"] = "✅ 分镜已全部就绪，可以拼合成片"
         
         if updated: self.save()
         return self.workflow
@@ -1746,20 +1798,18 @@ class WorkflowManager:
                 total_affected += affected
                 
             elif op == "global_subject_swap":
-                old_s = act.get("old_subject", "").lower()
-                new_s = act.get("new_subject", "").lower()
-                if old_s and new_s:
+                old_subject = act.get("old_subject", "").lower()
+                new_subject = act.get("new_subject", "").lower()
+                if old_subject and new_subject:
                     for s in self.workflow.get("shots", []):
-                        if old_s in s["description"].lower():
-                            s["description"] = re.sub(old_s, new_s, s["description"], flags=re.IGNORECASE)
+                        if old_subject in s["description"].lower():
+                            s["description"] = re.sub(old_subject, new_subject, s["description"], flags=re.IGNORECASE)
                             s["status"]["stylize"] = "NOT_STARTED"
                             s["status"]["video_generate"] = "NOT_STARTED"
-                            
                             v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
                             if v_path.exists(): os.remove(v_path)
                             i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
                             if i_path.exists(): os.remove(i_path)
-                            
                             s["assets"]["video"] = None
                             s["assets"]["stylized_frame"] = None
                             total_affected += 1
@@ -1784,27 +1834,22 @@ class WorkflowManager:
         return {"status": "success", "affected_shots": total_affected}
 
     def run_node(self, node_type: str, shot_id: Optional[str] = None):
-        """💡 核心重组：逻辑编排引擎。确保‘先有图，后有视频’且无死锁"""
+        """逻辑编排引擎。确保‘先有图，后有视频’且无死锁"""
         self.workflow.setdefault("meta", {}).setdefault("attempts", 0)
         self.workflow["meta"]["attempts"] += 1
         
-        # 1. 确定本次操作影响的范围
         target_shots = [s for s in self.workflow.get("shots", []) if not shot_id or s["shot_id"] == shot_id]
 
-        # 2. 依赖项检查：如果要生视频，必须确保风格化图已存在且成功
         if node_type == "video_generate":
             for s in target_shots:
                 if s["status"].get("stylize") != "SUCCESS":
                     print(f"🔗 [Dependency] 分镜 {s['shot_id']} 缺少定妆图，正在前置生成...")
-                    # 直接调用 runner 中的风格化方法
                     run_stylize(self.job_dir, self.workflow, target_shot=s["shot_id"])
-                    # 重新加载确认产物
                     i_file = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
                     if i_file.exists(): 
                         s["status"]["stylize"] = "SUCCESS"
                         s["assets"]["stylized_frame"] = f"stylized_frames/{s['shot_id']}.png"
 
-        # 3. 准备执行
         stage_key = "video_gen" if node_type == "video_generate" else "stylize"
         self.workflow["global_stages"][stage_key] = "RUNNING"
 
@@ -1822,7 +1867,6 @@ class WorkflowManager:
 
         self.save()
 
-        # 4. 正式调用 Runner
         if node_type == "stylize": 
             run_stylize(self.job_dir, self.workflow, target_shot=shot_id)
         elif node_type == "video_generate": 
@@ -1872,7 +1916,7 @@ class WorkflowManager:
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;900&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; overflow: hidden; }
-        .glass { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
+        .glass { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
         .node-line { stroke: #3b82f6; stroke-width: 2; fill: none; stroke-opacity: 0.2; transition: stroke-opacity 0.3s; }
         .node-line-active { stroke: #3b82f6; stroke-width: 3; stroke-dasharray: 8; animation: flow 1s linear infinite; stroke-opacity: 1; }
         @keyframes flow { from { stroke-dashoffset: 16; } to { stroke-dashoffset: 0; } }
@@ -1898,13 +1942,20 @@ class WorkflowManager:
             const [loading, setLoading] = useState(false);
             const [uploading, setUploading] = useState(false);
             const [isAgentVisible, setIsAgentVisible] = useState(true);
+            
+            // 💡 状态锁定：正在编辑时禁止轮询更新 UI
+            const [isEditing, setIsEditing] = useState(false);
 
             // 画布缩放和拖拽状态
             const [transform, setTransform] = useState({ x: 80, y: 50, scale: 0.45 });
             const isDragging = useRef(false);
             const lastMousePos = useRef({ x: 0, y: 0 });
 
+            // 1. 获取数据
             const fetchWorkflow = async (jobId) => {
+                // 💡 如果正在编辑，则静默获取但不更新 State，防止覆盖输入内容
+                if (isEditing) return;
+
                 try {
                     const targetId = jobId || currentJobId;
                     const url = targetId ? `/api/workflow?job_id=${targetId}` : '/api/workflow';
@@ -1921,14 +1972,17 @@ class WorkflowManager:
             useEffect(() => {
                 const timer = setInterval(() => { if (currentJobId && !uploading) fetchWorkflow(currentJobId); }, 3000);
                 return () => clearInterval(timer);
-            }, [currentJobId, uploading]);
+            }, [currentJobId, uploading, isEditing]);
 
+            // 2. 画布交互逻辑 (Zoom & Pan)
             const handleWheel = (e) => {
                 if (viewMode !== 'graph') return;
                 const delta = e.deltaY > 0 ? -0.05 : 0.05;
                 setTransform(prev => ({ ...prev, scale: Math.min(Math.max(prev.scale + delta, 0.05), 1.5) }));
             };
-            const handleMouseDown = (e) => { if (viewMode === 'graph') { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; } };
+            const handleMouseDown = (e) => {
+                if (viewMode === 'graph') { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; }
+            };
             const handleMouseMove = (e) => {
                 if (!isDragging.current || viewMode !== 'graph') return;
                 const dx = e.clientX - lastMousePos.current.x;
@@ -1938,6 +1992,7 @@ class WorkflowManager:
             };
             const handleMouseUp = () => { isDragging.current = false; };
 
+            // 3. 核心功能逻辑
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -1969,12 +2024,23 @@ class WorkflowManager:
                 fetchWorkflow(currentJobId);
             };
 
-            const updateShot = async (shotId, desc) => {
+            // 💡 状态同步：实时更新本地内存
+            const handleTextChangeLocal = (shotId, newVal) => {
+                setWorkflow(prev => ({
+                    ...prev,
+                    shots: prev.shots.map(s => s.shot_id === shotId ? { ...s, description: newVal } : s)
+                }));
+            };
+
+            // 💡 状态同步：失去焦点保存并重置分镜状态
+            const saveShotUpdate = async (shotId, desc) => {
+                setIsEditing(false); // 解锁轮询
                 await fetch('/api/shot/update', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ shot_id: shotId, description: desc, job_id: currentJobId })
                 });
+                fetchWorkflow(currentJobId);
             };
 
             const runTask = async (type, shotId = null) => {
@@ -1986,15 +2052,15 @@ class WorkflowManager:
             const SHOT_BLOCK_HEIGHT = 650; 
             const totalShots = workflow?.shots?.length || 0;
             const masterSourceY = (totalShots * SHOT_BLOCK_HEIGHT) / 2 - 325;
-            const finalMergeX = 4200; // 增长画布以容纳所有节点
+            const finalMergeX = 4200; 
 
             if (!workflow && !uploading) {
                 return (
-                    <div className="h-screen flex items-center justify-center p-4 bg-slate-950">
+                    <div className="h-screen flex items-center justify-center p-4 bg-slate-950 text-white">
                         <div className="max-w-xl w-full glass rounded-[3rem] p-12 text-center space-y-8 border-blue-500/20 border-2 shadow-2xl">
-                            <h1 className="text-3xl font-black tracking-tighter uppercase italic text-blue-400">Start ReTake Project</h1>
+                            <h1 className="text-3xl font-black tracking-tighter uppercase italic">Start ReTake Project</h1>
                             <label className="block bg-slate-900 border-2 border-dashed border-slate-700 hover:border-blue-500 p-12 rounded-[2rem] transition-all cursor-pointer">
-                                <span className="text-slate-400 font-bold uppercase text-sm tracking-widest">Select Video File</span>
+                                <span className="text-blue-500 font-black uppercase text-sm tracking-widest">Select Video File</span>
                                 <input type="file" onChange={handleFileUpload} className="hidden" accept="video/*" />
                             </label>
                         </div>
@@ -2005,27 +2071,26 @@ class WorkflowManager:
             if (uploading) return <div className="h-screen flex items-center justify-center bg-slate-950 text-2xl font-black animate-pulse uppercase tracking-tighter text-blue-400">AI Deconstructing...</div>;
 
             return (
-                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden">
+                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden text-white">
                     {/* Header */}
                     <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5 z-50">
                         <div className="flex items-center gap-6">
-                            <h1 className="text-xl font-black tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic uppercase pr-4">ReTake Workstation</h1>
+                            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic uppercase pr-4">ReTake Workstation</h1>
                             <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
                                 <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
                                 <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW CANVAS</button>
                             </div>
                         </div>
                         <div className="flex gap-4">
-                            <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase">+ New Project</button>
+                            <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase tracking-widest">+ New Project</button>
                             <button onClick={() => runTask('video_generate')} className="bg-emerald-600 hover:bg-emerald-500 px-6 py-2 rounded-xl text-sm font-black shadow-lg uppercase transition-all">Execute All</button>
                         </div>
                     </div>
 
                     <div className="flex flex-1 gap-4 overflow-hidden relative">
-                        {/* 画布主区域 */}
                         <div 
                             className={`flex-1 glass rounded-[3rem] overflow-hidden relative border border-white/10 no-select ${viewMode === 'graph' ? 'canvas-bg' : ''}`}
-                            onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={() => isDragging.current = false} onMouseLeave={() => isDragging.current = false}
+                            onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
                         >
                             {viewMode === 'grid' ? (
                                 <div className="h-full overflow-y-auto p-10 custom-scrollbar">
@@ -2036,39 +2101,43 @@ class WorkflowManager:
                                                 <div key={shot.shot_id} className="glass rounded-[2rem] border border-white/5 p-8 bg-slate-950/20 relative shadow-xl">
                                                     <div className="flex justify-between items-center mb-6 px-2">
                                                         <span className="font-mono text-xs text-blue-400 font-bold uppercase tracking-widest">{shot.shot_id}</span>
-                                                        <span className="text-[10px] text-slate-600 font-mono tracking-tighter italic pr-40 uppercase">Shot Ref: {shot.start_time}s</span>
+                                                        <span className="text-[10px] text-slate-600 font-mono tracking-tighter pr-40 uppercase">Shot Ref: {shot.start_time}s</span>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-6">
-                                                        {/* 1. 原始分镜图 */}
                                                         <div className="space-y-3">
-                                                            <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 bg-black shadow-lg">
+                                                            <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 bg-black">
                                                                 <img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover" />
                                                                 <div className="absolute top-3 left-3 bg-red-500 text-[8px] px-2 py-0.5 font-black rounded uppercase">SOURCE IMAGE</div>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest">原始分镜图</p>
+                                                            <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest font-bold">原始分镜图</p>
                                                         </div>
-                                                        {/* 2. 风格化参考图 */}
                                                         <div className="space-y-3">
                                                             <div className="relative aspect-video rounded-2xl overflow-hidden border border-purple-500/30 bg-slate-900 shadow-[0_0_20px_rgba(168,85,247,0.1)]">
-                                                                {shot.assets.stylized_frame ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic uppercase tracking-tighter font-black animate-pulse">DNA Pending</div>}
+                                                                {shot.assets.stylized_frame ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic uppercase font-black animate-pulse">DNA Pending</div>}
                                                                 <div className="absolute top-3 left-3 bg-purple-600 text-[8px] px-2 py-0.5 font-black rounded uppercase text-white">STYLIZED DNA</div>
                                                                 <button onClick={() => runTask('stylize', shot.shot_id)} className="absolute bottom-3 right-3 glass p-2 rounded-lg hover:bg-white/10 transition-colors"><svg className="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth="3"/></svg></button>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest underline decoration-purple-900">分镜定妆图</p>
+                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest font-bold">分镜定妆图</p>
                                                         </div>
-                                                        {/* 3. AI 输出视频 */}
                                                         <div className="space-y-3">
                                                             <div className={`relative aspect-video rounded-2xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40 shadow-xl' : 'border-blue-500/20 bg-slate-900'}`}>
                                                                 {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex items-center justify-center font-mono text-[9px] text-blue-400 animate-pulse uppercase tracking-widest">{shot.status?.video_generate}</div>}
                                                                 <div className="absolute top-3 left-3 bg-blue-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase text-white">AI OUTPUT</div>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest">最终生成视频</p>
+                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest font-bold">最终生成视频</p>
                                                         </div>
                                                     </div>
                                                     <div className="mt-8 p-5 bg-slate-900/50 rounded-2xl border border-white/5 relative">
                                                         <div className="mb-2 text-[9px] text-slate-500 italic uppercase tracking-tighter">Style Context: {workflow.global?.style_prompt}</div>
-                                                        <textarea className="w-full bg-transparent border-none text-[13px] text-slate-300 outline-none h-20 resize-none italic font-medium leading-relaxed" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
-                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-emerald-400 font-black uppercase tracking-widest hover:text-emerald-300 transition-all shadow-2xl border border-emerald-900/20 px-4 py-1.5 rounded-full">Execute Re-Draw</button></div>
+                                                        {/* Storyboard 视图下的受控文本框 */}
+                                                        <textarea 
+                                                            className="w-full bg-transparent border-none text-[13px] text-slate-300 outline-none h-20 resize-none italic font-medium leading-relaxed" 
+                                                            value={shot.description} 
+                                                            onFocus={() => setIsEditing(true)}
+                                                            onChange={(e) => handleTextChangeLocal(shot.shot_id, e.target.value)}
+                                                            onBlur={(e) => saveShotUpdate(shot.shot_id, e.target.value)} 
+                                                        />
+                                                        <div className="flex justify-end mt-2"><button onClick={() => runTask('video_generate', shot.shot_id)} className="text-[10px] text-emerald-400 font-black uppercase tracking-widest hover:text-emerald-300 transition-all border border-emerald-900/20 px-4 py-1.5 rounded-full shadow-2xl">Execute Re-Draw</button></div>
                                                     </div>
                                                 </div>
                                             );
@@ -2076,80 +2145,91 @@ class WorkflowManager:
                                     </div>
                                 </div>
                             ) : (
-                                /* 💡 [形态 1] 全链路放射逻辑图升级版 */
+                                /* 💡 [工作流模式] 完整逻辑链路补全版 */
                                 <div className="absolute inset-0 origin-top-left transition-transform duration-75" style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}>
                                     <svg className="absolute inset-0 w-[10000px] h-[10000px] pointer-events-none z-10">
                                         {workflow.shots?.map((shot, i) => (
                                             <React.Fragment key={i}>
-                                                {/* 连线: Master -> Input */}
                                                 <path d={`M 430 ${masterSourceY + 185} C 530 ${masterSourceY + 185}, 530 ${200 + i * SHOT_BLOCK_HEIGHT}, 630 ${200 + i * SHOT_BLOCK_HEIGHT}`} className={`node-line ${shot.status?.video_generate === 'RUNNING' ? 'node-line-active' : ''}`} />
-                                                {/* 连线: Output -> Final Merge */}
                                                 <path d={`M ${finalMergeX - 100} ${200 + i * SHOT_BLOCK_HEIGHT} C ${finalMergeX - 250} ${200 + i * SHOT_BLOCK_HEIGHT}, ${finalMergeX - 250} ${masterSourceY + 185}, ${finalMergeX} ${masterSourceY + 185}`} className="node-line" style={{ strokeOpacity: 0.1 }} />
                                             </React.Fragment>
                                         ))}
                                     </svg>
                                     
-                                    {/* 1. Master Source (原始视频) */}
                                     <div className="absolute left-20 w-[410px] glass p-10 rounded-[4rem] border-2 border-red-500/40 shadow-2xl" style={{ top: `${masterSourceY}px` }}>
                                         <div className="absolute -right-3 top-1/2 -translate-y-1/2 w-8 h-8 bg-red-500 rounded-full border-4 border-slate-950 shadow-[0_0_20px_#ef4444]"></div>
-                                        <h3 className="text-xs font-black text-red-500 mb-6 uppercase tracking-widest italic underline decoration-red-900">Root: Master Source</h3>
-                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10"><video src={getAssetUrl('input.mp4')} className="w-full h-full object-cover" controls muted loop /></div>
+                                        <h3 className="text-xs font-black text-red-500 mb-6 uppercase tracking-widest underline decoration-red-900">Root: Master Source Video</h3>
+                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10 shadow-3xl">
+                                            <video src={getAssetUrl('input.mp4')} className="w-full h-full object-cover" controls muted loop />
+                                        </div>
                                     </div>
 
-                                    {/* 2. 核心逻辑链 (分流并排) */}
                                     <div className="absolute left-[630px] top-0 flex flex-col gap-40 py-20">
                                         {workflow.shots?.map((shot, i) => {
-                                            const isSuccess = shot.status?.video_generate === 'SUCCESS';
-                                            const isImgSuccess = shot.status?.stylize === 'SUCCESS';
+                                            const isImgReady = !!shot.assets.stylized_frame;
+                                            const isVidReady = shot.status?.video_generate === 'SUCCESS';
                                             return (
-                                                <div key={shot.shot_id} className="flex items-center gap-10">
-                                                    {/* [节点 A] 拆出的分镜图 + Prompt */}
+                                                <div key={shot.shot_id} className="flex items-center gap-12">
+                                                    
+                                                    {/* Node: Deconstructed Input */}
                                                     <div className="w-[600px] glass p-10 rounded-[3.5rem] border border-white/10 relative shadow-2xl">
-                                                        <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-blue-500 rounded-full border-4 border-slate-950 shadow-[0_0_15px_#3b82f6]"></div>
-                                                        <h4 className="text-blue-400 font-black text-[10px] mb-6 uppercase tracking-[0.2em]">Logic Layer 01: Deconstructed Input</h4>
-                                                        <div className="flex gap-8">
-                                                            <div className="w-48 h-32 rounded-2xl bg-black overflow-hidden border border-white/5 shadow-inner"><img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover" /></div>
+                                                        <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-blue-500 rounded-full border-4 border-slate-950"></div>
+                                                        <div className="text-blue-400 font-black text-[10px] mb-4 uppercase tracking-widest">Logic Layer: Shot Prompt Editor</div>
+                                                        <div className="flex gap-6">
+                                                            <div className="w-48 h-32 rounded-2xl bg-black overflow-hidden border border-white/5 shadow-inner">
+                                                                <img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover opacity-80" />
+                                                            </div>
                                                             <div className="flex-1">
-                                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60 italic">Prompt Content</span>
-                                                                <textarea className="w-full bg-slate-950/50 border border-white/10 rounded-2xl p-4 text-sm text-slate-200 h-32 mt-4 outline-none focus:border-blue-500/40 transition-all font-medium leading-relaxed" defaultValue={shot.description} onBlur={(e) => updateShot(shot.shot_id, e.target.value)} />
+                                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60 italic">Prompt Override</span>
+                                                                <textarea 
+                                                                    className="w-full bg-slate-950/50 border border-white/10 rounded-2xl p-4 text-sm text-slate-200 h-32 mt-4 outline-none focus:border-blue-500/40 transition-all font-medium leading-relaxed shadow-inner" 
+                                                                    value={shot.description} 
+                                                                    onFocus={() => setIsEditing(true)}
+                                                                    onChange={(e) => handleTextChangeLocal(shot.shot_id, e.target.value)}
+                                                                    onBlur={(e) => saveShotUpdate(shot.shot_id, e.target.value)} 
+                                                                />
                                                             </div>
                                                         </div>
                                                     </div>
+
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* [节点 B] 风格与模型 (生图阶段) */}
-                                                    <div className="flex flex-col gap-6">
-                                                        <div className="w-40 glass p-4 rounded-2xl border border-purple-500/30 flex flex-col items-center">
-                                                            <span className="text-[8px] text-slate-500 uppercase font-black mb-1">Global Style</span>
-                                                            <div className="text-[9px] text-purple-400 font-mono italic text-center w-full truncate">{workflow.global?.style_prompt}</div>
+                                                    {/* Node: Style DNA */}
+                                                    <div className="flex flex-col gap-4">
+                                                        <div className="w-44 glass p-4 rounded-2xl border border-purple-500/30 flex flex-col items-center">
+                                                            <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Active Style</span>
+                                                            <p className="text-[9px] text-purple-400 font-mono italic truncate w-full text-center">"{workflow.global?.style_prompt}"</p>
                                                         </div>
-                                                        <div className="w-40 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center">
-                                                            <span className="text-[8px] text-slate-500 uppercase font-black mb-1">Img Model</span>
-                                                            <div className="text-[9px] text-slate-300 font-bold uppercase font-mono">Nano Banana Pro</div>
-                                                        </div>
-                                                    </div>
-                                                    <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
-
-                                                    {/* [节点 C] 风格化参考图 (DNA) */}
-                                                    <div className={`w-[350px] glass p-4 rounded-[2.5rem] border ${isImgSuccess ? 'border-purple-500/50' : 'border-white/5 opacity-40'}`}>
-                                                        <div className="text-[8px] text-purple-500 font-black uppercase mb-2 tracking-widest">Stylized Frame (DNA)</div>
-                                                        <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-white/10 relative">
-                                                            {isImgSuccess ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic font-mono uppercase tracking-widest">(Not Generated)</div>}
+                                                        <div className="w-44 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center opacity-40">
+                                                            <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Image Model</span>
+                                                            <p className="text-[9px] text-slate-300 font-bold uppercase">Imagen 4.0</p>
                                                         </div>
                                                     </div>
+
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* [节点 D] 视频模型节点 */}
-                                                    <div className="w-32 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center opacity-40">
-                                                        <span className="text-[8px] text-slate-500 uppercase font-black mb-1">Vid Model</span>
-                                                        <div className="text-[9px] text-slate-300 font-bold uppercase font-mono">Veo 3.1</div>
+                                                    {/* Node: Stylized Result (DNA) */}
+                                                    <div className={`w-[350px] glass p-4 rounded-[2.5rem] border ${isImgReady ? 'border-purple-500/50' : 'border-white/5 opacity-30'}`}>
+                                                        <div className="text-[8px] text-purple-500 font-black uppercase mb-2 tracking-widest text-center">Stylized DNA Output</div>
+                                                        <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-white/10">
+                                                            {isImgReady ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic uppercase">Not Ready</div>}
+                                                        </div>
                                                     </div>
+
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* [节点 E] AI 分镜视频 (输出) */}
-                                                    <div className={`w-[600px] glass p-4 rounded-[4rem] border transition-all duration-700 shadow-2xl ${isSuccess ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-white/5 opacity-20'}`}>
+                                                    {/* Node: AI Processing Node */}
+                                                    <div className="w-32 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center opacity-30">
+                                                        <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Vid Model</span>
+                                                        <p className="text-[9px] text-slate-300 font-bold uppercase font-mono">Veo 3.1</p>
+                                                    </div>
+
+                                                    <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
+
+                                                    {/* Node: Final AI Shot */}
+                                                    <div className={`w-[700px] glass p-4 rounded-[4rem] border transition-all duration-700 shadow-3xl ${isVidReady ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-white/5 opacity-20'}`}>
                                                         <div className="aspect-video bg-black rounded-[3rem] overflow-hidden relative shadow-inner">
-                                                            {isSuccess && shot.assets.video ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover shadow-2xl" autoPlay muted loop controls /> : <div className="h-full flex items-center justify-center font-mono text-xs text-slate-700 tracking-[0.5em] uppercase italic">(Video Not Generated)</div>}
+                                                            {isVidReady && shot.assets.video ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover shadow-2xl" autoPlay muted loop controls /> : <div className="h-full flex items-center justify-center font-mono text-xs text-slate-700 tracking-[0.5em] uppercase italic">Awaiting AI Processing</div>}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2157,24 +2237,24 @@ class WorkflowManager:
                                         })}
                                     </div>
 
-                                    {/* 3. FINAL Result Node (合成大视频) */}
-                                    <div className="absolute w-[800px] glass p-14 rounded-[6rem] border-2 border-emerald-500/40 shadow-[0_0_120px_rgba(16,185,129,0.2)] z-20" style={{ left: `${finalMergeX}px`, top: `${masterSourceY - 150}px` }}>
+                                    {/* Merge Output Node */}
+                                    <div className="absolute w-[800px] glass p-14 rounded-[6rem] border-2 border-emerald-500/40 shadow-[0_0_120px_rgba(16,185,129,0.2)] z-20 text-white" style={{ left: `${finalMergeX}px`, top: `${masterSourceY - 150}px` }}>
                                         <div className="absolute -left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-emerald-500 rounded-full border-4 border-slate-950 shadow-[0_0_30px_#10b981]"></div>
                                         <div className="flex justify-between items-center mb-8 px-4">
-                                            <div>
-                                                <h3 className="text-sm font-black text-emerald-400 uppercase tracking-[0.3em]">FINAL MOVIE EXPORT</h3>
-                                                <p className="text-[10px] text-slate-500 font-mono mt-1 italic italic leading-relaxed">Combining all {totalShots} parallel segments...</p>
+                                            <div className="flex flex-col gap-2">
+                                                <h3 className="text-sm font-black text-emerald-400 uppercase tracking-[0.3em]">Final Assembly Export</h3>
+                                                <p className="text-[10px] font-mono text-red-400 italic">{workflow.merge_info?.message}</p>
                                             </div>
-                                            <button onClick={() => runTask('merge')} className="bg-emerald-600 hover:bg-emerald-400 px-10 py-3 rounded-full text-xs font-black uppercase tracking-widest text-white shadow-lg transition-all active:scale-95 shadow-emerald-950">RE-ASSEMBLE</button>
+                                            <button 
+                                                disabled={!workflow.merge_info?.can_merge}
+                                                onClick={() => runTask('merge')} 
+                                                className={`px-10 py-3 rounded-full text-xs font-black uppercase tracking-widest shadow-lg transition-all active:scale-95 ${workflow.merge_info?.can_merge ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}
+                                            >
+                                                {workflow.global_stages?.merge === 'SUCCESS' ? 'RE-ASSEMBLE' : 'Merge All'}
+                                            </button>
                                         </div>
                                         <div className="aspect-video bg-black rounded-[4rem] overflow-hidden border border-white/10 shadow-3xl relative">
-                                            {workflow.global_stages?.merge === 'SUCCESS' ? (
-                                                <video src={getAssetUrl('final_output.mp4')} className="w-full h-full object-cover" controls autoPlay muted loop />
-                                            ) : (
-                                                <div className="h-full flex flex-col items-center justify-center text-[10px] text-slate-600 font-mono italic p-12 text-center uppercase tracking-[0.6em]">
-                                                    Awaiting all AI segments completion...
-                                                </div>
-                                            )}
+                                            {workflow.global_stages?.merge === 'SUCCESS' ? <video src={getAssetUrl('final_output.mp4')} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex flex-col items-center justify-center text-[10px] text-slate-600 font-mono italic p-12 text-center uppercase tracking-[0.6em]">Awaiting segments success...</div>}
                                         </div>
                                     </div>
                                 </div>
@@ -2183,22 +2263,22 @@ class WorkflowManager:
 
                         {/* Agent Sidebar */}
                         <div className={`sidebar-transition flex flex-col glass rounded-[3rem] overflow-hidden border border-white/10 shadow-2xl relative ${isAgentVisible ? 'w-96 ml-4' : 'w-0 border-none'}`}>
-                            <button onClick={() => setIsAgentVisible(!isAgentVisible)} className={`absolute top-1/2 -left-5 -translate-y-1/2 w-10 h-10 glass rounded-full flex items-center justify-center text-blue-400 hover:text-white transition-all z-[100] border border-white/10 shadow-2xl ${!isAgentVisible ? 'translate-x-[-3rem] rotate-180' : ''}`}>
+                            <button onClick={() => setIsAgentVisible(!isAgentVisible)} className={`absolute top-10 -left-5 w-10 h-10 glass rounded-full flex items-center justify-center text-blue-400 hover:text-white transition-all z-[100] border border-white/10 shadow-2xl ${!isAgentVisible ? 'translate-x-[-3rem] rotate-180' : ''}`}>
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
                             </button>
                             {isAgentVisible && (
-                                <div className="flex flex-col h-full">
+                                <div className="flex flex-col h-full text-white">
                                     <div className="p-6 border-b border-white/5 bg-white/5 font-black uppercase text-xs tracking-widest text-emerald-400">Director Agent</div>
                                     <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed">
                                         {messages.map((m, i) => (
                                             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                                <div className={`max-w-[90%] p-4 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none shadow-lg' : 'bg-slate-800 text-slate-200 shadow-xl border border-white/5'}`}>{m.text}</div>
+                                                <div className={`max-w-[90%] p-4 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none shadow-lg' : 'bg-slate-800 text-slate-200 border border-white/5 shadow-xl'}`}>{m.text}</div>
                                             </div>
                                         ))}
                                     </div>
                                     <div className="p-6 bg-slate-900/80 border-t border-white/10">
                                         <div className="flex gap-3">
-                                            <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command..." className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-xs outline-none focus:border-blue-500 text-white shadow-inner" />
+                                            <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command..." className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-xs outline-none focus:border-blue-500 text-white" />
                                             <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-5 py-3 rounded-2xl font-black text-xs shadow-lg">Send</button>
                                         </div>
                                     </div>

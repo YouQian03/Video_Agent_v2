@@ -112,6 +112,30 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
         ai_stylize_frame(job_dir, wf, shot)
 
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
+
+    def _normalize_file_id(raw_id: str) -> str:
+        if not raw_id:
+            return raw_id
+        return raw_id if "/" in raw_id else f"files/{raw_id}"
+
+    def _extract_file_id(video_output) -> str | None:
+        if isinstance(video_output, str):
+            return _normalize_file_id(video_output)
+        if isinstance(video_output, dict):
+            name = video_output.get("name")
+            if name:
+                return _normalize_file_id(name)
+            uri = video_output.get("uri")
+            if uri:
+                return _normalize_file_id(f"files/{uri.split('/')[-1]}")
+            return None
+        name = getattr(video_output, "name", None)
+        if name:
+            return _normalize_file_id(name)
+        uri = getattr(video_output, "uri", None)
+        if uri:
+            return _normalize_file_id(f"files/{uri.split('/')[-1]}")
+        return None
     
     try:
         operation = client.models.generate_videos(
@@ -127,38 +151,30 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             ),
         )
 
-        while not operation.done:
+        op_name = getattr(operation, "name", None)
+        if not op_name and isinstance(operation, str):
+            op_name = operation
+        if not op_name:
+            raise RuntimeError(f"无法解析 Veo 操作名: {operation}")
+
+        while not getattr(operation, "done", False):
             time.sleep(20)
-            operation = client.operations.get(operation.name)
+            operation = client.operations.get(op_name)
             print(f"⏳ 视频渲染中...")
 
-        if operation.error:
+        if getattr(operation, "error", None):
             raise RuntimeError(f"Veo 后端报错: {operation.error}")
 
-        resp = operation.response
+        resp = getattr(operation, "response", None)
         if resp is None or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
             raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
 
-        # 💡 核心修复：处理 video 字段可能是 str 也可能是 Object 的情况
+        # 💡 核心修复：处理 video 字段可能是 str / dict / Object 的情况
         video_output = resp.generated_videos[0].video
-        file_id = None
-        
-        if isinstance(video_output, str):
-            # 如果直接返回的是字符串 ID
-            file_id = video_output
-        else:
-            # 如果返回的是对象，尝试多种取值方式
-            file_id = getattr(video_output, 'name', None)
-            if not file_id and hasattr(video_output, 'uri'):
-                # 兼容 URI 格式: https://.../files/xyz -> files/xyz
-                file_id = f"files/{video_output.uri.split('/')[-1]}"
-        
+        file_id = _extract_file_id(video_output)
+
         if not file_id:
             raise RuntimeError(f"无法从响应中解析有效的 File ID: {video_output}")
-
-        # 确保 ID 格式正确 (必须包含 files/ 前缀)
-        if '/' not in file_id:
-            file_id = f"files/{file_id}"
 
         print(f"✅ 生成成功，正在下载文件: {file_id}")
         
