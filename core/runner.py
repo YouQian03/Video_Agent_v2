@@ -37,7 +37,7 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     description = shot.get("description", "")
     prompt = f"A professional stylized storyboard frame. Subject: {description}. Art Style: {global_style}. High resolution, 16:9 cinematic framing."
 
-    print(f"🖼️  AI 正在尝试生成定妆图: {shot['shot_id']}")
+    print(f"️  AI 正在尝试生成定妆图: {shot['shot_id']}")
 
     try:
         print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
@@ -113,10 +113,20 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
 
-    def _normalize_file_id(raw_id: str) -> str:
+    def _normalize_file_id(raw_id: str | None) -> str | None:
         if not raw_id:
             return raw_id
         return raw_id if "/" in raw_id else f"files/{raw_id}"
+
+    def _get_field(obj, field: str):
+        if isinstance(obj, dict):
+            return obj.get(field)
+        return getattr(obj, field, None)
+
+    def _extract_operation_name(op) -> str | None:
+        if isinstance(op, str):
+            return op
+        return _get_field(op, "name")
 
     def _extract_file_id(video_output) -> str | None:
         if isinstance(video_output, str):
@@ -151,26 +161,31 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             ),
         )
 
-        op_name = getattr(operation, "name", None)
-        if not op_name and isinstance(operation, str):
-            op_name = operation
+        op_name = _extract_operation_name(operation)
         if not op_name:
             raise RuntimeError(f"无法解析 Veo 操作名: {operation}")
 
-        while not getattr(operation, "done", False):
+        done = bool(_get_field(operation, "done"))
+        while not done:
             time.sleep(20)
             operation = client.operations.get(op_name)
+            if isinstance(operation, str):
+                raise RuntimeError(f"Veo 轮询返回了非法操作对象: {operation}")
+            done = bool(_get_field(operation, "done"))
             print(f"⏳ 视频渲染中...")
 
-        if getattr(operation, "error", None):
-            raise RuntimeError(f"Veo 后端报错: {operation.error}")
+        error = _get_field(operation, "error")
+        if error:
+            raise RuntimeError(f"Veo 后端报错: {error}")
 
-        resp = getattr(operation, "response", None)
-        if resp is None or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
+        resp = _get_field(operation, "response")
+        generated_videos = _get_field(resp, "generated_videos") if resp is not None else None
+        if not generated_videos:
             raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
 
         # 💡 核心修复：处理 video 字段可能是 str / dict / Object 的情况
-        video_output = resp.generated_videos[0].video
+        first_video = generated_videos[0]
+        video_output = _get_field(first_video, "video")
         file_id = _extract_file_id(video_output)
 
         if not file_id:
@@ -244,6 +259,7 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
     run_stylize(job_dir, wf, target_shot=target_shot)
     wf = load_workflow(job_dir)
     run_video_generate(job_dir, wf, target_shot=target_shot)
+
 
 
 
