@@ -99,7 +99,8 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+    # 使用与 video_generator.py 相同的客户端初始化方式
+    client = genai.Client(api_key=api_key)
 
     videos_dir = ensure_videos_dir(job_dir)
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
@@ -113,94 +114,75 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
 
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
 
-    def _normalize_file_id(raw_id: str | None) -> str | None:
-        if not raw_id:
-            return raw_id
-        return raw_id if "/" in raw_id else f"files/{raw_id}"
+    image_bytes = img_path.read_bytes()
+    prompt = f"Cinematic video, {shot.get('description', '')}. Style: {wf.get('global', {}).get('style_prompt', '')}."
 
-    def _get_field(obj, field: str):
-        if isinstance(obj, dict):
-            return obj.get(field)
-        return getattr(obj, field, None)
-
-    def _extract_operation_name(op) -> str | None:
-        if isinstance(op, str):
-            return op
-        return _get_field(op, "name")
-
-    def _extract_file_id(video_output) -> str | None:
-        if isinstance(video_output, str):
-            return _normalize_file_id(video_output)
-        if isinstance(video_output, dict):
-            name = video_output.get("name")
-            if name:
-                return _normalize_file_id(name)
-            uri = video_output.get("uri")
-            if uri:
-                return _normalize_file_id(f"files/{uri.split('/')[-1]}")
-            return None
-        name = getattr(video_output, "name", None)
-        if name:
-            return _normalize_file_id(name)
-        uri = getattr(video_output, "uri", None)
-        if uri:
-            return _normalize_file_id(f"files/{uri.split('/')[-1]}")
-        return None
-    
     try:
+        # image 作为独立参数传递，不在 config 内
         operation = client.models.generate_videos(
-            model="models/veo-3.1-generate-preview", 
-            prompt=f"Cinematic video, {shot.get('description', '')}. Style: {wf.get('global', {}).get('style_prompt', '')}.",
+            model="veo-3.1-generate-preview",
+            prompt=prompt,
             image=types.Image(
-                image_bytes=img_path.read_bytes(),
+                image_bytes=image_bytes,
                 mime_type="image/png"
             ),
             config=types.GenerateVideosConfig(
-                number_of_videos=1,
-                duration_seconds=6.0
-            ),
+                aspect_ratio="16:9"
+            )
         )
 
-        op_name = _extract_operation_name(operation)
-        if not op_name:
-            raise RuntimeError(f"无法解析 Veo 操作名: {operation}")
+        print(f"⏳ 视频正在云端渲染 (Operation ID: {operation.name})")
 
-        done = bool(_get_field(operation, "done"))
-        while not done:
+        poll_count = 0
+        max_polls = 60  # 20 minutes max
+        while not operation.done:
+            poll_count += 1
+            if poll_count > max_polls:
+                raise RuntimeError(f"Veo 轮询超时: 已等待超过 20 分钟")
+            print(f"⏳ 视频渲染中... (轮询 {poll_count})")
             time.sleep(20)
-            operation = client.operations.get(op_name)
-            if isinstance(operation, str):
-                raise RuntimeError(f"Veo 轮询返回了非法操作对象: {operation}")
-            done = bool(_get_field(operation, "done"))
-            print(f"⏳ 视频渲染中...")
+            operation = client.operations.get(operation)
 
-        error = _get_field(operation, "error")
-        if error:
-            raise RuntimeError(f"Veo 后端报错: {error}")
+        # 检查错误
+        if operation.error:
+            raise RuntimeError(f"Veo 后端报错: {operation.error}")
 
-        resp = _get_field(operation, "response")
-        generated_videos = _get_field(resp, "generated_videos") if resp is not None else None
-        if not generated_videos:
+        # 检查结果
+        if not operation.result or not operation.result.generated_videos:
             raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
 
-        # 💡 核心修复：处理 video 字段可能是 str / dict / Object 的情况
-        first_video = generated_videos[0]
-        video_output = _get_field(first_video, "video")
-        file_id = _extract_file_id(video_output)
+        generated_video = operation.result.generated_videos[0]
+
+        # 优先使用 SDK 原生 save 方法
+        try:
+            generated_video.video.save(str(out_path))
+            print(f"💾 视频生成成功 (SDK save): {out_path}")
+            return f"videos/{out_path.name}"
+        except Exception as save_err:
+            print(f"⚠️ SDK save 失败 ({save_err})，尝试手动下载...")
+
+        # 备用：手动下载
+        file_id = None
+        video_obj = generated_video.video if hasattr(generated_video, 'video') else generated_video
+
+        if hasattr(video_obj, 'name') and video_obj.name:
+            file_id = video_obj.name if "/" in video_obj.name else f"files/{video_obj.name}"
+        elif hasattr(video_obj, 'uri') and video_obj.uri:
+            file_id = f"files/{video_obj.uri.split('/')[-1]}"
 
         if not file_id:
-            raise RuntimeError(f"无法从响应中解析有效的 File ID: {video_output}")
+            raise RuntimeError(f"无法从响应中解析有效的 File ID: {type(video_obj).__name__}")
 
         print(f"✅ 生成成功，正在下载文件: {file_id}")
-        
+
         download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
         query_params = {'alt': 'media', 'key': api_key}
         response = requests.get(download_url, params=query_params, stream=True)
-        
+
         if response.status_code == 200:
             with open(out_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=1024*1024): f.write(chunk)
-            print(f"💾 视频生成成功: {out_path}")
+            print(f"💾 视频生成成功 (手动下载): {out_path}")
             return f"videos/{out_path.name}"
         else:
             raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
@@ -259,6 +241,8 @@ def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
     run_stylize(job_dir, wf, target_shot=target_shot)
     wf = load_workflow(job_dir)
     run_video_generate(job_dir, wf, target_shot=target_shot)
+
+
 
 
 
