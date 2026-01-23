@@ -14,6 +14,8 @@ from core.workflow_manager import WorkflowManager
 from core.agent_engine import AgentEngine
 
 app = FastAPI(title="AI 导演工作台 API")
+Path("jobs").mkdir(parents=True, exist_ok=True)
+Path("temp_uploads").mkdir(parents=True, exist_ok=True)
 
 # 1. 跨域配置
 app.add_middleware(
@@ -164,7 +166,7 @@ async def add_no_cache_header(request, call_next):
     return response
 
 # 挂载静态资源目录
-app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
+app.mount("/assets", StaticFiles(directory="jobs", check_dir=False), name="assets")
 
 if __name__ == "__main__":
     import uvicorn
