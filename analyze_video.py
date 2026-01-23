@@ -9,15 +9,98 @@ VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
 OUT_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
 
 DIRECTOR_METAPROMPT = r"""
-请你扮演一位专业的影视分镜分析师，专注以「画面变化」为核心，
-将刚才的视频拆解为详细的分镜表。
+请你扮演一位专业的影视分镜分析师，将视频拆解为详细的分镜表。
+
+📋 【核心要求 - 语义分层】
+你必须将描述分为两个独立层次：
+
+🎭 **叙事层 (Narrative Layer)** - frame_description 字段：
+- 仅描述视觉内容：人物、物体、背景、环境、情节
+- ❌ 禁止包含任何技术性镜头语言（如"镜头推进"、"camera pans"）
+- ✅ 正确示例："A woman stands on a desolate beach at sunset, waves crashing behind her"
+- ❌ 错误示例："The camera slowly pans to reveal a woman on a beach"（包含技术描述）
+
+🎥 **技术层 (Technical Layer)** - 独立的元数据字段：
+- 所有镜头技术信息必须放入专用字段，不得混入叙事描述
+
+📐 【画幅约束】
+所有描述基于 16:9 宽屏电影画幅。
+
+🎬 【关键：摄影参数精准提取 - Cinematography Fidelity】
+你必须从源视频画面中精确分析并提取以下参数，这些参数将被硬编码到生成提示中：
+
+1️⃣ **景别 (Shot Scale)** - shot_scale 字段：
+   必须严格选择以下之一：
+   - "EXTREME_WIDE": 大远景，人物极小，环境为主
+   - "WIDE": 全景，完整人体可见，环境占比大
+   - "MEDIUM_WIDE": 中全景，膝盖以上可见
+   - "MEDIUM": 中景，腰部以上可见
+   - "MEDIUM_CLOSE": 中近景，胸部以上可见
+   - "CLOSE_UP": 特写，面部为主
+   - "EXTREME_CLOSE_UP": 大特写，眼睛/嘴唇等局部
+
+2️⃣ **主体画面坐标 (Subject Frame Position)** - subject_frame_position 字段：
+   必须精确描述主体在16:9画幅中的位置（使用九宫格坐标）：
+   - "top-left", "top-center", "top-right"
+   - "center-left", "center", "center-right"
+   - "bottom-left", "bottom-center", "bottom-right"
+   或更精确的描述如 "left-third-vertical-center", "right-third-lower"
+
+3️⃣ **主体朝向与视线 (Orientation & Gaze)** - subject_orientation 和 gaze_direction 字段：
+   subject_orientation（身体朝向）：
+   - "facing-camera": 正面面对镜头
+   - "back-to-camera": 背对镜头
+   - "profile-left": 左侧面（面朝画面左侧）
+   - "profile-right": 右侧面（面朝画面右侧）
+   - "three-quarter-left": 3/4侧面朝左
+   - "three-quarter-right": 3/4侧面朝右
+
+   gaze_direction（视线方向）：
+   - "looking-at-camera": 直视镜头
+   - "looking-left": 看向画面左侧
+   - "looking-right": 看向画面右侧
+   - "looking-up": 向上看
+   - "looking-down": 向下看
+   - "looking-off-screen-left": 看向画外左侧
+   - "looking-off-screen-right": 看向画外右侧
+
+4️⃣ **运动矢量 (Motion Vector)** - motion_vector 字段：
+   精确描述主体的运动方向和动作：
+   - "static": 静止不动
+   - "walking-left": 向画面左侧行走
+   - "walking-right": 向画面右侧行走
+   - "walking-toward-camera": 向镜头走来
+   - "walking-away-from-camera": 背向镜头走去
+   - "running-left/right": 奔跑方向
+   - "turning-left/right": 转身方向
+   - "gesturing-left/right": 手势方向
+   - 复合动作如 "walking-right-while-looking-left"
+
 你必须严格按照JSON格式输出。
 根元素为包含多个分镜对象的JSON数组。
+
 每个对象包含：
-shot_number, frame_description, content_analysis,
-start_time, end_time, duration_seconds,
-shot_type, camera_angle, camera_movement,
-focus_and_depth, lighting, music_and_sound, voiceover。
+=== 叙事层字段 ===
+- shot_number: 分镜序号
+- frame_description: 纯视觉叙事描述（禁止包含镜头技术词汇）
+- content_analysis: 场景内容与情节分析
+
+=== 摄影参数字段（必须精确填写）===
+- shot_scale: 景别（必填，从上述7个选项中选择）
+- subject_frame_position: 主体在画面中的精确坐标位置
+- subject_orientation: 主体身体朝向
+- gaze_direction: 主体视线方向
+- motion_vector: 运动矢量描述
+
+=== 技术层字段（元数据标签）===
+- camera_type: 镜头类型，如 "Static", "Dolly", "Pan", "Tilt", "Zoom", "Handheld", "Crane"
+- camera_movement: 镜头运动描述，如 "Slow push in", "Pan left to right", "Static"
+
+=== 时间与其他字段 ===
+- start_time, end_time, duration_seconds: 时间信息
+- shot_type, camera_angle: 景别与角度
+- focus_and_depth, lighting: 其他信息
+
 无信息请填 null。
 仅输出纯 JSON。
 """.strip()
@@ -36,22 +119,55 @@ def ensure_api_key() -> str:
 
 
 def extract_json_array(text: str):
+    import re
     if not text:
         raise ValueError("模型没有返回文本（response.text 为空）。")
 
     s = text.strip()
-    if s.startswith("[") and s.endswith("]"):
-        return json.loads(s)
 
+    # Find JSON array bounds
     l = s.find("[")
     r = s.rfind("]")
-    if l != -1 and r != -1 and r > l:
-        return json.loads(s[l : r + 1])
+    if l == -1 or r == -1 or r <= l:
+        raise ValueError(
+            "未能从模型输出中提取 JSON 数组。\n"
+            "请把模型原始输出复制出来检查（它可能没有按要求输出 JSON）。"
+        )
 
-    raise ValueError(
-        "未能从模型输出中提取 JSON 数组。\n"
-        "请把模型原始输出复制出来检查（它可能没有按要求输出 JSON）。"
-    )
+    json_str = s[l : r + 1]
+
+    # 🔧 Fix common JSON formatting issues from LLM output
+    # 1. Remove trailing commas before ] or }
+    json_str = re.sub(r',\s*]', ']', json_str)
+    json_str = re.sub(r',\s*}', '}', json_str)
+
+    # 2. Remove JavaScript-style comments
+    json_str = re.sub(r'//.*?\n', '\n', json_str)
+    json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+
+    # 3. Fix unquoted keys (common LLM error)
+    # Match patterns like { key: or , key: and ensure key is quoted
+    json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        # Print debug info for troubleshooting
+        print(f"⚠️ JSON 解析失败，尝试进一步修复...")
+        print(f"错误位置: {e.msg} at line {e.lineno} col {e.colno}")
+
+        # 4. Last resort: try to fix single quotes
+        json_str_fixed = json_str.replace("'", '"')
+        try:
+            return json.loads(json_str_fixed)
+        except:
+            pass
+
+        raise ValueError(
+            f"JSON 解析失败: {e.msg}\n"
+            f"位置: line {e.lineno}, column {e.colno}\n"
+            "请检查模型输出格式。"
+        )
 
 
 def wait_until_file_active(client: genai.Client, file_obj, timeout_s: int = 120, poll_s: int = 2):

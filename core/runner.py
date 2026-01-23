@@ -20,13 +20,14 @@ def ensure_videos_dir(job_dir: Path) -> Path:
 def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     """
     💡 使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
+    🎬 Cinematography Fidelity: Hard-coded enforcement of source shot parameters
     """
     from google import genai
     from google.genai import types
 
     api_key = os.getenv("GEMINI_API_KEY")
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
-    
+
     src = job_dir / shot["assets"]["first_frame"]
     dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -36,13 +37,127 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
     description = shot.get("description", "")
 
-    # 🎬 风格强控：使用强力变换指令，确保 AI 大胆改变风格
-    prompt = f"""TOTAL VISUAL TRANSFORMATION REQUIRED.
-Hyper-stylized storyboard frame with COMPLETE aesthetic overhaul.
+    # 🎬 Extract cinematography parameters for fidelity enforcement
+    cinema = shot.get("cinematography", {})
+    shot_scale = cinema.get("shot_scale", "")
+    subject_position = cinema.get("subject_frame_position", "")
+    subject_orientation = cinema.get("subject_orientation", "")
+    gaze_direction = cinema.get("gaze_direction", "")
+    motion_vector = cinema.get("motion_vector", "")
+
+    # 🎯 Build cinematography constraint block
+    cinema_constraints = []
+
+    # 1️⃣ Shot Scale Mapping
+    scale_instructions = {
+        "EXTREME_WIDE": "EXTREME WIDE SHOT - Subject very small in frame, vast environment dominates",
+        "WIDE": "WIDE SHOT - Full body visible, significant environment context",
+        "MEDIUM_WIDE": "MEDIUM WIDE SHOT - Subject from knees up, environmental context",
+        "MEDIUM": "MEDIUM SHOT - Subject from waist up, balanced framing",
+        "MEDIUM_CLOSE": "MEDIUM CLOSE-UP - Subject from chest up, intimate but contextual",
+        "CLOSE_UP": "CLOSE-UP - Face fills most of frame, minimal background",
+        "EXTREME_CLOSE_UP": "EXTREME CLOSE-UP - Single feature (eyes, lips) fills frame"
+    }
+    if shot_scale and shot_scale in scale_instructions:
+        cinema_constraints.append(f"📐 SHOT SCALE: {scale_instructions[shot_scale]}")
+
+    # 2️⃣ Subject Position in Frame
+    if subject_position:
+        cinema_constraints.append(f"📍 FRAME POSITION: Subject MUST be positioned at {subject_position} of the 16:9 frame")
+
+    # 3️⃣ Orientation & Facing
+    if subject_orientation:
+        orientation_map = {
+            "facing-camera": "Subject facing directly toward camera (frontal view)",
+            "back-to-camera": "Subject's back facing camera (rear view)",
+            "profile-left": "Subject in left profile (nose pointing to frame left)",
+            "profile-right": "Subject in right profile (nose pointing to frame right)",
+            "three-quarter-left": "Subject in 3/4 view facing left (showing right side of face)",
+            "three-quarter-right": "Subject in 3/4 view facing right (showing left side of face)"
+        }
+        orient_desc = orientation_map.get(subject_orientation, subject_orientation)
+        cinema_constraints.append(f"🧭 BODY ORIENTATION: {orient_desc}")
+
+    # 4️⃣ Gaze Direction
+    if gaze_direction:
+        gaze_map = {
+            "looking-at-camera": "Eyes looking directly into camera lens",
+            "looking-left": "Eyes directed toward the left side of frame",
+            "looking-right": "Eyes directed toward the right side of frame",
+            "looking-up": "Eyes directed upward",
+            "looking-down": "Eyes directed downward",
+            "looking-off-screen-left": "Eyes looking past the left edge of frame",
+            "looking-off-screen-right": "Eyes looking past the right edge of frame"
+        }
+        gaze_desc = gaze_map.get(gaze_direction, gaze_direction)
+        cinema_constraints.append(f"👁️ GAZE DIRECTION: {gaze_desc}")
+
+    # 5️⃣ Motion Vector
+    if motion_vector and motion_vector != "static":
+        cinema_constraints.append(f"🏃 MOTION VECTOR: Capture mid-action of '{motion_vector}' - body pose and motion blur should indicate this movement")
+
+    # Build final constraint string
+    cinematography_block = ""
+    if cinema_constraints:
+        cinematography_block = "\n\n🎬 CINEMATOGRAPHY FIDELITY - MANDATORY CONSTRAINTS (from source shot):\n" + "\n".join(cinema_constraints) + "\n⚠️ These parameters are LOCKED and must be preserved exactly as specified."
+
+    # 🎨 Conditional Design Elements: Only trigger graphic layouts if explicitly requested
+    design_keywords = ['poster', 'layout', 'magazine', 'border', 'collage', 'graphic design', 'storyboard paper']
+    style_lower = global_style.lower()
+    is_design_style = any(kw in style_lower for kw in design_keywords)
+
+    if is_design_style:
+        # User explicitly requested a design/layout style
+        prompt = f"""STYLIZED GRAPHIC DESIGN COMPOSITION.
+Create a {global_style} layout with intentional design elements.
 Subject: {description}.
-Art Style: {global_style} - Apply this style AGGRESSIVELY and BOLDLY.
-Requirements: High resolution, 16:9 cinematic framing, dramatic lighting, professional composition.
-IMPORTANT: Do NOT preserve original appearance. FULLY transform into the specified art style."""
+Style: {global_style} - Apply graphic design aesthetics as requested.
+Format: 16:9 aspect ratio with artistic layout elements.{cinematography_block}"""
+    else:
+        # 🎬 DEFAULT: Full-bleed cinematic film still using structured prompt format
+        # Format: [Subject], [Action/Pose], [Environment], [Style & Atmosphere], [Lighting & Color], [Camera & Tech Specs]
+
+        # Extract action/pose from motion vector
+        action_pose = motion_vector if motion_vector and motion_vector != "static" else "in a natural pose"
+
+        # Build structured prompt components
+        subject_block = f"[SUBJECT]: {description}"
+        action_block = f"[ACTION/POSE]: {action_pose}, captured mid-motion with dynamic energy"
+        environment_block = "[ENVIRONMENT]: Immersive scene environment extending to all edges of the 16:9 frame, rich background details"
+        style_block = f"[STYLE & ATMOSPHERE]: {global_style} aesthetic, visually striking, enhanced visual impact with refined details and textures"
+        lighting_block = "[LIGHTING & COLOR]: Dramatic cinematic lighting, rich color grading, depth through light and shadow layers, volumetric atmosphere"
+        tech_block = "[CAMERA & TECH]: 35mm cinematic lens, 8K ultra high resolution, shallow depth of field, natural bokeh, film grain texture"
+
+        prompt = f"""PROFESSIONAL CINEMATIC FILM STILL - TEXT-TO-IMAGE GENERATION
+
+{subject_block}
+{action_block}
+{environment_block}
+{style_block}
+{lighting_block}
+{tech_block}
+{cinematography_block}
+
+COMPOSITION RULES:
+- Full-bleed edge-to-edge rendering filling 100% of the 16:9 canvas
+- ZERO borders, margins, or white space - render as if captured from cinema camera sensor
+- Subject photographed as cinematic scene, NOT shrunk into centered box
+- Professional cinematography with rule of thirds and depth of field
+- ALL cinematography constraints above MUST be strictly followed
+
+QUALITY ENHANCEMENT:
+- More visually impactful than standard output
+- Rich detail textures and refined material quality
+- Dramatic light/shadow interplay for depth
+- Cinematic color palette with professional grading
+
+FORBIDDEN:
+- Any white/black borders or margins
+- Changing shot scale, subject position, orientation, or gaze from source
+- Poster layouts, magazine compositions, or storyboard aesthetics
+- Any graphic design elements unless explicitly in style prompt
+
+--ar 16:9"""
 
     print(f"️  AI 正在尝试生成定妆图: {shot['shot_id']}")
 
@@ -125,12 +240,79 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     description = shot.get('description', '')
     style = wf.get('global', {}).get('style_prompt', '')
 
-    # 🎬 风格强控：确保视频生成保持一致性和风格化
-    prompt = f"""Cinematic video with CONSISTENT visual style throughout.
-Scene: {description}.
-Art Style: {style} - Maintain this style CONSISTENTLY across all frames.
-Requirements: Smooth motion, professional cinematography, dramatic lighting.
-CRITICAL: Keep subject position and composition STABLE. No sudden flips or mirror effects."""
+    # 🎬 Extract cinematography parameters for video fidelity
+    cinema = shot.get("cinematography", {})
+    shot_scale = cinema.get("shot_scale", "")
+    subject_position = cinema.get("subject_frame_position", "")
+    subject_orientation = cinema.get("subject_orientation", "")
+    gaze_direction = cinema.get("gaze_direction", "")
+    motion_vector = cinema.get("motion_vector", "static")
+
+    # Build video-specific cinematography constraints
+    video_constraints = []
+    if shot_scale:
+        video_constraints.append(f"Maintain {shot_scale} framing throughout")
+    if subject_position:
+        video_constraints.append(f"Subject stays at {subject_position} of frame")
+    if subject_orientation:
+        video_constraints.append(f"Subject maintains {subject_orientation} body angle")
+    if gaze_direction:
+        video_constraints.append(f"Gaze direction: {gaze_direction}")
+
+    constraints_str = ". ".join(video_constraints) if video_constraints else ""
+
+    # 🎬 Structured Image-to-Video Prompt Format
+    # Format: [Camera Movement], [Specific Action], [Physics Details], [Atmosphere Change]
+
+    # Determine camera movement based on motion vector
+    if motion_vector and motion_vector != "static":
+        if "walking" in motion_vector or "running" in motion_vector:
+            camera_movement = "subtle tracking shot following subject movement"
+        elif "toward" in motion_vector:
+            camera_movement = "gentle dolly back as subject approaches"
+        elif "away" in motion_vector:
+            camera_movement = "slow push in as subject recedes"
+        else:
+            camera_movement = "steady shot with minimal camera drift"
+        specific_action = f"Subject performs: {motion_vector}"
+    else:
+        camera_movement = "locked static shot with subtle breathing movement"
+        specific_action = "Subject maintains pose with natural micro-movements (breathing, blinking, subtle weight shifts)"
+
+    # Physics details for realism
+    physics_details = "natural physics: hair/fabric responds to movement, ambient particles float in light beams, subtle environmental motion (leaves, dust, reflections)"
+
+    # Atmosphere continuity
+    atmosphere_change = f"maintain {style} atmosphere throughout, consistent lighting evolution, seamless style continuity"
+
+    prompt = f"""PROFESSIONAL IMAGE-TO-VIDEO GENERATION - 3-5 SECOND CINEMATIC CLIP
+
+[CAMERA MOVEMENT]: {camera_movement}
+[SPECIFIC ACTION]: {specific_action}
+[PHYSICS DETAILS]: {physics_details}
+[ATMOSPHERE]: {atmosphere_change}
+
+SCENE CONTEXT: {description}
+ART STYLE: {style} - Maintain CONSISTENT style across ALL frames
+
+🎬 CINEMATOGRAPHY LOCK (from source shot - DO NOT CHANGE):
+{constraints_str}
+
+MOTION QUALITY REQUIREMENTS:
+- High motion quality, cinematic fluidity
+- Smooth interpolation between frames
+- Subject position and composition MUST remain STABLE
+- No sudden flips, mirror effects, or jarring camera changes
+- Preserve exact shot scale and framing from reference image
+
+PHYSICS ENHANCEMENT:
+- Realistic material physics (cloth flow, hair dynamics)
+- Environmental interaction (wind effects, light particles)
+- Natural motion blur on moving elements
+- Atmospheric depth continuity
+
+CRITICAL: Cinematography parameters are LOCKED - preserve exactly as specified.
+high motion quality, cinematic, professional cinematography"""
 
     # 🔄 自愈式重试逻辑：遇到 429 错误时自动等待并重试
     max_retries = 3

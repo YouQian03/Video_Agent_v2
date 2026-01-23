@@ -54,11 +54,55 @@ class WorkflowManager:
         for s in storyboard:
             shot_num = int(s.get("shot_number", 1))
             sid = f"shot_{shot_num:02d}"
+
+            # 📋 Semantic Split: Narrative Layer (plot) + Technical Layer (metadata tags)
+            # Narrative Layer - Pure visual/plot description (no camera technical terms)
+            narrative_desc = s.get("frame_description") or s.get("content_analysis") or ""
+
+            # 🎬 Cinematography Fidelity Parameters - Hard-coded constraints from source analysis
+            shot_scale = s.get("shot_scale", "")
+            subject_frame_position = s.get("subject_frame_position", "")
+            subject_orientation = s.get("subject_orientation", "")
+            gaze_direction = s.get("gaze_direction", "")
+            motion_vector = s.get("motion_vector", "")
+            camera_type = s.get("camera_type") or s.get("camera_movement", "")
+
+            # Build structured description with HARD-CODED cinematography constraints
+            desc_lines = [narrative_desc]
+
+            # 🎯 CRITICAL: These are non-negotiable constraints that MUST be preserved
+            if shot_scale:
+                desc_lines.append(f"[SCALE: {shot_scale}]")
+            if subject_frame_position:
+                desc_lines.append(f"[POSITION: {subject_frame_position}]")
+            if subject_orientation:
+                desc_lines.append(f"[ORIENTATION: {subject_orientation}]")
+            if gaze_direction:
+                desc_lines.append(f"[GAZE: {gaze_direction}]")
+            if motion_vector:
+                desc_lines.append(f"[MOTION: {motion_vector}]")
+            if camera_type:
+                desc_lines.append(f"[CAMERA: {camera_type}]")
+
+            # Join with newlines for clear separation
+            full_description = "\n".join(desc_lines)
+
+            # 💾 Store raw cinematography data for downstream enforcement
+            cinematography_data = {
+                "shot_scale": shot_scale,
+                "subject_frame_position": subject_frame_position,
+                "subject_orientation": subject_orientation,
+                "gaze_direction": gaze_direction,
+                "motion_vector": motion_vector,
+                "camera_type": camera_type
+            }
+
             shots.append({
                 "shot_id": sid,
                 "start_time": s.get("start_time"),
                 "end_time": s.get("end_time"),
-                "description": s.get("frame_description") or s.get("content_analysis"),
+                "description": full_description,
+                "cinematography": cinematography_data,  # 🎬 Hard-coded source cinematography for fidelity enforcement
                 "entities": [],
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
@@ -338,8 +382,53 @@ class WorkflowManager:
                 new_subject = act.get("new_subject", "").lower()
                 if old_subject and new_subject:
                     for s in self.workflow.get("shots", []):
+                        # 🏞️ Intelligent Scene Detection: Skip scenery/landscape shots
+                        if self._is_scenery_shot(s["description"]):
+                            print(f"🏞️ Scenery shot skipped (no character injection): {s['shot_id']}")
+                            continue
+
                         if old_subject in s["description"].lower():
-                            s["description"] = re.sub(old_subject, new_subject, s["description"], flags=re.IGNORECASE)
+                            desc = s["description"]
+
+                            # 🧹 STEP 1: STRICT ATTRIBUTE PURGING for gender conflicts
+                            # For simple swaps, purge gender-conflicting attributes
+                            purged_desc = self._purge_conflicting_attributes(desc, old_subject, {})
+                            print(f"🧹 Purged conflicting attributes from {s['shot_id']}")
+
+                            # 🔍 STEP 2: Separate narrative layer from technical tags
+                            tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+                            tags = re.findall(tag_pattern, purged_desc)
+                            narrative_part = re.sub(tag_pattern, '', purged_desc).strip()
+
+                            # 🔄 STEP 3: Replace SUBJECT_PLACEHOLDER with new subject
+                            if 'SUBJECT_PLACEHOLDER' in narrative_part:
+                                # Replace ONLY the first placeholder with the subject
+                                new_narrative = narrative_part.replace('SUBJECT_PLACEHOLDER', new_subject, 1)
+                                # Replace remaining placeholders with "the [subject]"
+                                new_narrative = new_narrative.replace('SUBJECT_PLACEHOLDER', f'the {new_subject}')
+                            else:
+                                # Fallback: direct replacement
+                                new_narrative = re.sub(
+                                    rf'\b{re.escape(old_subject)}\b',
+                                    new_subject,
+                                    narrative_part,
+                                    flags=re.IGNORECASE
+                                )
+
+                            # 🧹 STEP 4: Semantic Sanitization for pronouns
+                            new_narrative = self._semantic_sanitize_gender(new_narrative, old_subject, new_subject)
+
+                            # 🧹 STEP 5: Clean up duplicates and grammar
+                            new_narrative = re.sub(r',\s*,', ',', new_narrative)
+                            new_narrative = re.sub(r'\s{2,}', ' ', new_narrative)
+                            new_narrative = new_narrative.strip()
+                            if new_narrative:
+                                new_narrative = new_narrative[0].upper() + new_narrative[1:]
+
+                            # Reconstruct description: narrative + preserved tags
+                            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+                            s["description"] = new_narrative + ("\n" + "\n".join(tag_lines) if tag_lines else "")
+
                             s["status"]["stylize"] = "NOT_STARTED"
                             s["status"]["video_generate"] = "NOT_STARTED"
                             v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
@@ -349,6 +438,131 @@ class WorkflowManager:
                             s["assets"]["video"] = None
                             s["assets"]["stylized_frame"] = None
                             total_affected += 1
+                            print(f"🧹 Clean swap applied: {s['shot_id']}")
+
+            elif op == "detailed_subject_swap":
+                # 🎨 Fine-Grained Attribute Propagation: Detailed character replacement with visual attributes
+                # 🆔 Global Identity Anchor: Store and propagate consistent character identity
+                old_subject = act.get("old_subject", "").lower()
+                new_subject = act.get("new_subject", "").lower()
+                attributes = act.get("attributes", {})
+
+                if old_subject and new_subject:
+                    # Build the detailed character description from attributes
+                    attr_parts = []
+
+                    # Order attributes for natural reading: age, body, hair, eyes, skin, clothing, accessories, other
+                    if attributes.get("age_descriptor"):
+                        attr_parts.append(attributes["age_descriptor"])
+                    if attributes.get("body_type"):
+                        attr_parts.append(attributes["body_type"])
+
+                    # Hair description (combine style and color)
+                    hair_parts = []
+                    if attributes.get("hair_color"):
+                        hair_parts.append(attributes["hair_color"])
+                    if attributes.get("hair_style"):
+                        hair_parts.append(attributes["hair_style"])
+                    if hair_parts:
+                        attr_parts.append(" ".join(hair_parts) + " hair")
+
+                    if attributes.get("eye_color"):
+                        attr_parts.append(f"{attributes['eye_color']} eyes")
+                    if attributes.get("skin_tone"):
+                        attr_parts.append(f"{attributes['skin_tone']} skin")
+                    if attributes.get("facial_features"):
+                        attr_parts.append(f"with {attributes['facial_features']}")
+                    if attributes.get("clothing"):
+                        attr_parts.append(f"wearing {attributes['clothing']}")
+                    if attributes.get("accessories"):
+                        attr_parts.append(f"with {attributes['accessories']}")
+                    if attributes.get("other_visual"):
+                        attr_parts.append(attributes["other_visual"])
+
+                    # Construct full character description
+                    if attr_parts:
+                        # Format: "a [attributes] [subject]" e.g., "a young golden short hair woman wearing red attire"
+                        full_character_desc = f"a {' '.join(attr_parts)} {new_subject}"
+                    else:
+                        full_character_desc = new_subject
+
+                    # 🆔 Store Global Identity Anchor in workflow for consistency tracking
+                    self.workflow.setdefault("global", {})["identity_anchor"] = {
+                        "base_subject": new_subject,
+                        "full_description": full_character_desc,
+                        "attributes": attributes,
+                        "replaced_from": old_subject
+                    }
+                    print(f"🆔 Global Identity Anchor set: '{full_character_desc}'")
+
+                    shots_modified = 0
+                    shots_skipped = 0
+
+                    for s in self.workflow.get("shots", []):
+                        # 🏞️ Intelligent Scene Detection: Skip scenery/landscape shots
+                        if self._is_scenery_shot(s["description"]):
+                            print(f"🏞️ Scenery shot preserved (identity not injected): {s['shot_id']}")
+                            shots_skipped += 1
+                            continue
+
+                        if old_subject in s["description"].lower():
+                            desc = s["description"]
+
+                            # 🧹 STEP 1: STRICT ATTRIBUTE PURGING
+                            # Completely remove ALL conflicting descriptors before applying new Visual DNA
+                            purged_desc = self._purge_conflicting_attributes(desc, old_subject, attributes)
+                            print(f"🧹 Purged conflicting attributes from {s['shot_id']}")
+
+                            # 🔍 STEP 2: Separate narrative layer from technical tags (tags preserved by purge)
+                            tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+                            tags = re.findall(tag_pattern, purged_desc)
+                            narrative_part = re.sub(tag_pattern, '', purged_desc).strip()
+
+                            # 🆔 STEP 3: Replace SUBJECT_PLACEHOLDER with new identity
+                            # The purge method leaves SUBJECT_PLACEHOLDER where the old subject was
+                            if 'SUBJECT_PLACEHOLDER' in narrative_part:
+                                # Replace ONLY the first placeholder with full description
+                                new_narrative = narrative_part.replace('SUBJECT_PLACEHOLDER', full_character_desc, 1)
+                                # Replace remaining placeholders with simple pronoun or "the [subject]"
+                                new_narrative = new_narrative.replace('SUBJECT_PLACEHOLDER', f'the {new_subject}')
+                            else:
+                                # Fallback: append identity if placeholder not found
+                                new_narrative = f"{full_character_desc}, {narrative_part}" if narrative_part else full_character_desc
+
+                            # 🧹 STEP 4: Semantic Sanitization for pronouns
+                            new_narrative = self._semantic_sanitize_gender(new_narrative, old_subject, new_subject)
+
+                            # 🧹 STEP 5: Clean up duplicates and grammar
+                            # Remove duplicate "a [subject]" patterns that may have been created
+                            new_narrative = re.sub(rf'\b(a\s+{re.escape(new_subject)})\s*,\s*a\s+{re.escape(new_subject)}\b', r'\1', new_narrative, flags=re.IGNORECASE)
+                            # Remove duplicate consecutive words
+                            new_narrative = re.sub(r'\b(\w+)\s+\1\b', r'\1', new_narrative, flags=re.IGNORECASE)
+                            # Clean up multiple commas/spaces
+                            new_narrative = re.sub(r',\s*,', ',', new_narrative)
+                            new_narrative = re.sub(r'\s{2,}', ' ', new_narrative)
+                            # Capitalize first letter of sentence
+                            new_narrative = new_narrative.strip()
+                            if new_narrative:
+                                new_narrative = new_narrative[0].upper() + new_narrative[1:]
+
+                            # Reconstruct description: narrative + preserved tags
+                            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+                            s["description"] = new_narrative + ("\n" + "\n".join(tag_lines) if tag_lines else "")
+
+                            # Reset generation status
+                            s["status"]["stylize"] = "NOT_STARTED"
+                            s["status"]["video_generate"] = "NOT_STARTED"
+                            v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                            if v_path.exists(): os.remove(v_path)
+                            i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                            if i_path.exists(): os.remove(i_path)
+                            s["assets"]["video"] = None
+                            s["assets"]["stylized_frame"] = None
+                            shots_modified += 1
+                            print(f"🆔 Clean identity applied: {s['shot_id']}")
+
+                    total_affected += shots_modified
+                    print(f"🎨 Identity Anchoring complete: {shots_modified} protagonist shots updated, {shots_skipped} scenery shots preserved")
                             
             elif op == "update_shot_params":
                 sid = act.get("shot_id")
@@ -391,6 +605,51 @@ class WorkflowManager:
                         total_affected += 1
                         print(f"📐 增强分镜描述: {sid} -> {s['description'][:80]}...")
                         break
+
+            elif op == "update_cinematography":
+                # 🎬 摄影参数修改（仅当用户明确要求时）
+                sid = act.get("shot_id")
+                param = act.get("param", "")
+                new_value = act.get("value", "")
+                valid_params = ["shot_scale", "subject_frame_position", "subject_orientation", "gaze_direction", "motion_vector"]
+                if param in valid_params and new_value:
+                    for s in self.workflow.get("shots", []):
+                        if s["shot_id"] == sid:
+                            # Update the cinematography dict
+                            s.setdefault("cinematography", {})[param] = new_value
+
+                            # Update the description tags to match
+                            tag_map = {
+                                "shot_scale": "SCALE",
+                                "subject_frame_position": "POSITION",
+                                "subject_orientation": "ORIENTATION",
+                                "gaze_direction": "GAZE",
+                                "motion_vector": "MOTION"
+                            }
+                            tag_name = tag_map.get(param, param.upper())
+                            desc = s.get("description", "")
+
+                            # Replace existing tag or append new one
+                            tag_pattern = rf'\[{tag_name}: [^\]]+\]'
+                            new_tag = f"[{tag_name}: {new_value}]"
+                            if re.search(tag_pattern, desc):
+                                desc = re.sub(tag_pattern, new_tag, desc)
+                            else:
+                                desc = desc + f"\n{new_tag}"
+                            s["description"] = desc
+
+                            # Reset generation status
+                            s["status"]["stylize"] = "NOT_STARTED"
+                            s["status"]["video_generate"] = "NOT_STARTED"
+                            v_path = self.job_dir / "videos" / f"{sid}.mp4"
+                            if v_path.exists(): os.remove(v_path)
+                            i_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+                            if i_path.exists(): os.remove(i_path)
+                            s["assets"]["video"] = None
+                            s["assets"]["stylized_frame"] = None
+                            total_affected += 1
+                            print(f"🎬 摄影参数更新: {sid} [{param}] -> {new_value}")
+                            break
 
         if total_affected > 0: self.save()
         return {"status": "success", "affected_shots": total_affected}
@@ -435,6 +694,372 @@ class WorkflowManager:
             run_video_generate(self.job_dir, self.workflow, target_shot=shot_id)
         
         self.load() 
+
+    def _is_scenery_shot(self, description: str) -> bool:
+        """
+        🏞️ Intelligent Scene Detection: Determine if a shot is a scenery/landscape shot with no human protagonist.
+        Returns True if the shot should be SKIPPED during character replacement.
+        """
+        desc_lower = description.lower()
+
+        # Human subject indicators - if ANY of these are present, it's NOT a scenery shot
+        human_indicators = [
+            # Generic human terms
+            'man', 'woman', 'person', 'people', 'human', 'figure', 'silhouette',
+            'boy', 'girl', 'child', 'kid', 'baby', 'infant', 'toddler',
+            'teenager', 'adult', 'elder', 'elderly', 'senior',
+            # Relationship terms
+            'father', 'mother', 'dad', 'mom', 'parent', 'son', 'daughter',
+            'brother', 'sister', 'husband', 'wife', 'couple',
+            'friend', 'stranger', 'visitor', 'guest',
+            # Professional/role terms
+            'worker', 'employee', 'boss', 'doctor', 'nurse', 'teacher', 'student',
+            'driver', 'passenger', 'pedestrian', 'commuter',
+            'actor', 'actress', 'performer', 'singer', 'dancer',
+            'protagonist', 'character', 'hero', 'heroine',
+            # Body parts (indicating human presence)
+            'face', 'hand', 'hands', 'arm', 'arms', 'leg', 'legs',
+            'head', 'body', 'shoulder', 'back', 'chest',
+            'eye', 'eyes', 'hair', 'lips', 'mouth', 'nose',
+            # Actions that imply human
+            'walking', 'running', 'sitting', 'standing', 'talking', 'speaking',
+            'looking', 'watching', 'holding', 'carrying', 'wearing',
+            # Pronouns
+            'he ', 'she ', 'his ', 'her ', 'him ', 'they ', 'their ',
+        ]
+
+        # Check for human presence
+        has_human = any(indicator in desc_lower for indicator in human_indicators)
+
+        if has_human:
+            return False  # Not a scenery shot - has human protagonist
+
+        # Scenery/landscape indicators - if these dominate without humans, it's scenery
+        scenery_indicators = [
+            # Nature scenes
+            'landscape', 'scenery', 'vista', 'panorama', 'horizon',
+            'mountain', 'valley', 'forest', 'woods', 'jungle', 'desert',
+            'ocean', 'sea', 'lake', 'river', 'waterfall', 'beach', 'coast',
+            'sky', 'clouds', 'sunset', 'sunrise', 'dawn', 'dusk', 'night sky',
+            'field', 'meadow', 'prairie', 'grassland', 'garden', 'park',
+            # Urban scenes without people
+            'cityscape', 'skyline', 'building', 'architecture', 'street view',
+            'empty room', 'interior', 'exterior', 'establishing shot',
+            'aerial view', 'drone shot', 'bird\'s eye',
+            # Object focus
+            'close-up of object', 'food', 'vehicle', 'car ', 'train ', 'plane ',
+            'furniture', 'decoration', 'artifact',
+            # Transition/ambient
+            'transition', 'time lapse', 'ambient', 'atmosphere', 'mood shot',
+        ]
+
+        # Check for scenery dominance
+        has_scenery = any(indicator in desc_lower for indicator in scenery_indicators)
+
+        return has_scenery  # Is scenery if indicators present and no humans
+
+    def _semantic_sanitize_gender(self, description: str, old_subject: str, new_subject: str) -> str:
+        """
+        🧹 Semantic Sanitization: Clean gender-conflicting attributes when swapping subjects.
+        - Strips incompatible physical attributes (beard, mustache, Adam's apple, etc.)
+        - Remaps gendered pronouns (he/him/his → she/her/hers and vice versa)
+        """
+        # Define gender categories - expanded to catch variations
+        male_keywords = {'man', 'men', 'boy', 'boys', 'male', 'males', 'gentleman', 'gentlemen',
+                        'guy', 'guys', 'father', 'dad', 'husband', 'brother', 'son', 'uncle',
+                        'grandfather', 'protagonist', 'protagonists', 'hero', 'heroes', 'actor'}
+        female_keywords = {'woman', 'women', 'girl', 'girls', 'female', 'females', 'lady', 'ladies',
+                         'mother', 'mom', 'wife', 'sister', 'daughter', 'aunt', 'grandmother',
+                         'heroine', 'heroines', 'actress'}
+
+        # Check if any male/female keyword appears in the subject string
+        old_lower = old_subject.lower()
+        new_lower = new_subject.lower()
+
+        old_is_male = any(kw in old_lower for kw in male_keywords)
+        old_is_female = any(kw in old_lower for kw in female_keywords)
+        new_is_male = any(kw in new_lower for kw in male_keywords)
+        new_is_female = any(kw in new_lower for kw in female_keywords)
+
+        # Only sanitize if there's a gender change
+        if (old_is_male and new_is_female) or (old_is_female and new_is_male):
+            if old_is_male and new_is_female:
+                # Male → Female: Remove male-specific attributes
+                male_attributes = [
+                    # Mustache - ALL variations (most comprehensive)
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*mustache\b',  # "with a thick mustache", "with a handlebar mustache"
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*moustache\b', # British spelling
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*mustache\b',   # "has a mustache"
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+                    r'\bhaving\s+(?:a\s+)?(?:\w+\s+)*mustache\b', # "having a mustache"
+                    r'\bsporting\s+(?:a\s+)?(?:\w+\s+)*mustache\b', # "sporting a mustache"
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*mustache\b',  # "his thick mustache", "the mustache"
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*moustache\b',
+                    r'\b\w+\s+mustache\b',  # "thick mustache", "handlebar mustache"
+                    r'\b\w+\s+moustache\b',
+                    r'\bmustached\b', r'\bmoustached\b',
+                    r'\bmustache\b', r'\bmoustache\b',  # standalone as last resort
+                    # Beard - ALL variations
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*beard\b',
+                    r'\b\w+\s+beard\b',  # "thick beard", "full beard"
+                    r'\bbearded\b', r'\bbeard\b',
+                    # Goatee
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*goatee\b',
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*goatee\b',
+                    r'\bgoatee\b',
+                    # Stubble
+                    r'\bwith\s+(?:\w+\s+)*stubble\b',
+                    r'\b\w+\s+stubble\b',  # "five o'clock stubble"
+                    r'\bstubbled\b', r'\bstubble\b',
+                    # Facial hair general
+                    r'\bfacial\s+hair\b', r'\bwith\s+facial\s+hair\b',
+                    # Other male-specific
+                    r'\bAdam\'s\s+apple\b',
+                    r'\bbald\b', r'\bbalding\b',
+                    r'\bmuscular\b', r'\bbuff\b',
+                    r'\bbroad[- ]shouldered\b',
+                    r'\bchest\s+hair\b', r'\bwith\s+chest\s+hair\b',
+                ]
+                for attr in male_attributes:
+                    description = re.sub(attr, '', description, flags=re.IGNORECASE)
+
+                # Remap pronouns: he/him/his → she/her/hers
+                description = re.sub(r'\bhe\b', 'she', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhim\b', 'her', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhis\b', 'her', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhimself\b', 'herself', description, flags=re.IGNORECASE)
+
+            elif old_is_female and new_is_male:
+                # Female → Male: Remove female-specific attributes
+                female_attributes = [
+                    r'\b(lipstick)\b', r'\b(makeup|make-up)\b', r'\b(long eyelashes)\b',
+                    r'\b(feminine)\b', r'\b(pregnant)\b', r'\b(nursing)\b',
+                    r'\b(wearing a dress)\b', r'\b(in a skirt)\b'
+                ]
+                for attr in female_attributes:
+                    description = re.sub(attr, '', description, flags=re.IGNORECASE)
+
+                # Remap pronouns: she/her/hers → he/him/his
+                description = re.sub(r'\bshe\b', 'he', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bher\b(?!\s+\w+ing)', 'him', description, flags=re.IGNORECASE)  # Avoid "her walking"
+                description = re.sub(r'\bhers\b', 'his', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bherself\b', 'himself', description, flags=re.IGNORECASE)
+
+            # Clean up any double spaces left from attribute removal
+            description = re.sub(r'\s{2,}', ' ', description).strip()
+
+        return description
+
+    def _purge_conflicting_attributes(self, description: str, old_subject: str, new_attributes: Dict) -> str:
+        """
+        🧹 Strict Attribute Purging: Completely remove ALL conflicting descriptors before applying new Visual DNA.
+        This ensures a CLEAN transformation with zero residues from the original subject.
+
+        Purge Categories:
+        1. Old subject name and variants
+        2. Hair descriptions (color, style, length)
+        3. Clothing descriptions
+        4. Physical features and accessories
+        5. Age descriptors
+        6. Body type descriptors
+        """
+        # 🔍 Separate technical tags from narrative (preserve tags)
+        tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+        tags = re.findall(tag_pattern, description)
+        narrative = re.sub(tag_pattern, '', description).strip()
+
+        # ============================================
+        # 1️⃣ PURGE OLD SUBJECT NAME AND VARIANTS
+        # ============================================
+        old_lower = old_subject.lower()
+        subject_variants = {
+            'man': ['man', 'men', 'male', 'gentleman', 'guy', 'fellow', 'dude'],
+            'woman': ['woman', 'women', 'female', 'lady', 'girl'],
+            'boy': ['boy', 'boys', 'lad', 'young man', 'male child'],
+            'girl': ['girl', 'girls', 'lass', 'young woman', 'female child'],
+            'child': ['child', 'children', 'kid', 'kids', 'youngster'],
+            'person': ['person', 'people', 'individual', 'figure'],
+        }
+
+        # Find which category the old subject belongs to
+        variants_to_remove = [old_subject]
+        for category, variants in subject_variants.items():
+            if old_lower in variants or old_lower == category:
+                variants_to_remove.extend(variants)
+                break
+
+        # Remove old subject and its variants (but keep the position for replacement)
+        for variant in set(variants_to_remove):
+            # Use word boundary to avoid partial matches
+            narrative = re.sub(rf'\ba\s+{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\bthe\s+{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 2️⃣ PURGE ALL HAIR DESCRIPTIONS
+        # ============================================
+        hair_colors = [
+            'black', 'brown', 'blonde', 'blond', 'golden', 'silver', 'gray', 'grey',
+            'white', 'red', 'auburn', 'ginger', 'brunette', 'chestnut', 'platinum',
+            'dark', 'light', 'dirty blonde', 'strawberry blonde', 'jet black',
+            'salt and pepper', 'highlighted', 'dyed', 'colored'
+        ]
+        hair_styles = [
+            'short', 'long', 'medium', 'curly', 'straight', 'wavy', 'frizzy',
+            'bald', 'balding', 'shaved', 'buzz cut', 'crew cut', 'mohawk',
+            'ponytail', 'bun', 'braided', 'braids', 'dreadlocks', 'dreads',
+            'afro', 'pixie', 'bob', 'shoulder-length', 'flowing', 'slicked back',
+            'messy', 'neat', 'tousled', 'spiky', 'receding', 'thinning',
+            'thick', 'fine', 'wispy', 'layered'
+        ]
+
+        # Remove hair color + "hair" combinations
+        for color in hair_colors:
+            narrative = re.sub(rf'\b{color}\s+hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{color}-hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+
+        # Remove hair style + "hair" combinations
+        for style in hair_styles:
+            narrative = re.sub(rf'\b{style}\s+hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{style}-hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+
+        # Remove complex hair descriptions
+        narrative = re.sub(r'\bwith\s+[\w\s]+\s+hair\b', '', narrative, flags=re.IGNORECASE)
+        narrative = re.sub(r'\b[\w\s]+\s+haired\b', '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 3️⃣ PURGE ALL CLOTHING DESCRIPTIONS
+        # ============================================
+        clothing_patterns = [
+            r'\bwearing\s+[\w\s,]+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|tee|top|shorts|trousers|uniform|outfit|attire|clothes|clothing|garment)\b',
+            r'\bin\s+(?:a\s+)?[\w\s]+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|tee|top|shorts|trousers|uniform|outfit|attire)\b',
+            r'\bdressed\s+in\s+[\w\s,]+\b',
+            r'\bclad\s+in\s+[\w\s,]+\b',
+            # Specific clothing items with colors
+            r'\b(?:red|blue|black|white|green|yellow|pink|purple|orange|brown|gray|grey)\s+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|top)\b',
+        ]
+        for pattern in clothing_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 4️⃣ PURGE PHYSICAL FEATURES & ACCESSORIES
+        # ============================================
+        # Facial features - comprehensive patterns for mustache/beard/goatee
+        facial_features = [
+            # Mustache - ALL variations
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+            r'\bhaving\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bsporting\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*mustache\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*moustache\b',
+            r'\b\w+\s+mustache\b',
+            r'\b\w+\s+moustache\b',
+            r'\bmustached\b', r'\bmoustached\b',
+            r'\bmustache\b', r'\bmoustache\b',
+            # Beard - ALL variations
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*beard\b',
+            r'\b\w+\s+beard\b',
+            r'\bbearded\b', r'\bbeard\b',
+            # Goatee
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*goatee\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*goatee\b',
+            r'\bgoatee\b',
+            r'\bwith\s+stubble\b', r'\bstubbled\b',
+            r'\bwith\s+freckles\b', r'\bfreckled\b',
+            r'\bwith\s+(?:a\s+)?scar\b', r'\bscarred\b',
+            r'\bwith\s+dimples\b',
+            r'\bwith\s+wrinkles\b', r'\bwrinkled\b',
+            r'\bwith\s+(?:a\s+)?tattoo\b', r'\btattooed\b',
+        ]
+        for pattern in facial_features:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # Eye descriptions
+        eye_colors = ['blue', 'green', 'brown', 'hazel', 'gray', 'grey', 'black', 'amber', 'violet']
+        for color in eye_colors:
+            narrative = re.sub(rf'\b{color}\s+eyes?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{color}-eyed\b', '', narrative, flags=re.IGNORECASE)
+        narrative = re.sub(r'\bwith\s+[\w\s]+\s+eyes\b', '', narrative, flags=re.IGNORECASE)
+
+        # Accessories
+        accessories = [
+            r'\bwearing\s+(?:a\s+)?(?:glasses|sunglasses|spectacles)\b',
+            r'\bwith\s+(?:a\s+)?(?:glasses|sunglasses|spectacles)\b',
+            r'\bwearing\s+(?:a\s+)?(?:hat|cap|beanie|helmet)\b',
+            r'\bwith\s+(?:a\s+)?(?:hat|cap|beanie|helmet)\b',
+            r'\bwearing\s+(?:a\s+)?(?:necklace|earrings|bracelet|watch|ring)\b',
+            r'\bwith\s+(?:a\s+)?(?:necklace|earrings|bracelet|watch|ring)\b',
+            r'\bwearing\s+(?:a\s+)?(?:scarf|tie|bowtie|bow tie)\b',
+            r'\bwith\s+(?:a\s+)?(?:scarf|tie|bowtie|bow tie)\b',
+        ]
+        for pattern in accessories:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 5️⃣ PURGE AGE DESCRIPTORS
+        # ============================================
+        age_patterns = [
+            r'\byoung\b', r'\bold\b', r'\belderly\b', r'\bmiddle-aged\b', r'\bmiddle aged\b',
+            r'\bteenage\b', r'\bteen\b', r'\badult\b', r'\bsenior\b', r'\bjuvenile\b',
+            r'\bin (?:his|her|their) (?:20s|30s|40s|50s|60s|70s|80s|90s|twenties|thirties|forties|fifties|sixties|seventies|eighties|nineties)\b',
+        ]
+        for pattern in age_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 6️⃣ PURGE BODY TYPE DESCRIPTORS
+        # ============================================
+        body_patterns = [
+            r'\b(?:tall|short|slim|slender|thin|skinny|fat|heavy|overweight|muscular|athletic|petite|stocky|lanky|burly|chubby|plump)\b',
+            r'\bwell-built\b', r'\bwell built\b',
+            r'\bbroad[- ]shouldered\b',
+        ]
+        for pattern in body_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 7️⃣ PURGE SKIN TONE DESCRIPTORS
+        # ============================================
+        skin_patterns = [
+            r'\bfair[- ]skinned\b', r'\bfair skin\b',
+            r'\bdark[- ]skinned\b', r'\bdark skin\b',
+            r'\bpale[- ]skinned\b', r'\bpale skin\b',
+            r'\btan[- ]skinned\b', r'\btanned skin\b', r'\btanned\b',
+            r'\bolive[- ]skinned\b', r'\bolive skin\b',
+        ]
+        for pattern in skin_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # CLEANUP
+        # ============================================
+        # Remove orphaned articles and prepositions
+        narrative = re.sub(r'\ba\s+,', ',', narrative)
+        narrative = re.sub(r'\bthe\s+,', ',', narrative)
+        narrative = re.sub(r'\bwith\s+,', ',', narrative)
+        narrative = re.sub(r'\bwearing\s+,', ',', narrative)
+        narrative = re.sub(r'\bin\s+,', ',', narrative)
+
+        # Remove multiple spaces and clean up
+        narrative = re.sub(r'\s{2,}', ' ', narrative)
+        narrative = re.sub(r'\s+,', ',', narrative)
+        narrative = re.sub(r',\s*,', ',', narrative)
+        narrative = re.sub(r'^\s*,\s*', '', narrative)
+        narrative = re.sub(r'\s*,\s*$', '', narrative)
+        narrative = narrative.strip()
+
+        # Reconstruct with preserved tags
+        if tags:
+            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+            return narrative + "\n" + "\n".join(tag_lines)
+        return narrative
 
     def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
         for s in self.workflow.get("shots", []):
