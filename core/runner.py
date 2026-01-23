@@ -4,11 +4,12 @@ import shutil
 import subprocess
 import time
 import os
-import requests 
+import requests
 import io
 from PIL import Image
 
 from .workflow_io import save_workflow, load_workflow
+from .utils import get_ffmpeg_path
 
 
 def ensure_videos_dir(job_dir: Path) -> Path:
@@ -210,7 +211,7 @@ def mock_generate_video(job_dir: Path, shot: dict) -> str:
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
     if out_path.exists(): os.remove(out_path)
     src_video = job_dir / "input.mp4"
-    ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    ffmpeg = get_ffmpeg_path()
     cmd = [ffmpeg, "-y", "-i", str(src_video), "-t", "1.0", "-c", "copy", str(out_path)]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return f"videos/{out_path.name}"

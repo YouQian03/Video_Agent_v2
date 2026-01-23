@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from core.utils import get_ffmpeg_path
+
 PROJECT_DIR = Path(__file__).parent
 VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
 STORYBOARD_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
@@ -60,7 +62,7 @@ def main():
         out_path = FRAMES_DIR / f"shot_{int(shot_num):02d}.png"
 
         cmd = [
-            "/opt/homebrew/bin/ffmpeg",
+            get_ffmpeg_path(),
             "-y",
             "-ss", str(ts),
             "-i", str(VIDEO_PATH),

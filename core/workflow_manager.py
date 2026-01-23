@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional, Union
 from core.workflow_io import load_workflow, save_workflow
 from core.changes import apply_global_style, replace_entity_reference
 from core.runner import run_pipeline, run_stylize, run_video_generate
+from core.utils import get_ffmpeg_path
 
 # 引入拆解所需的库和逻辑
 from google import genai
@@ -267,7 +268,7 @@ class WorkflowManager:
         - 关键帧提取：从分镜中点提取，确保画面与描述一致
         - 视频片段：使用精准切割模式
         """
-        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+        ffmpeg_path = get_ffmpeg_path()
         for s in storyboard:
             ts = to_seconds(s.get("start_time"))
             end_ts = to_seconds(s.get("end_time"))
@@ -1068,7 +1069,7 @@ class WorkflowManager:
 
     def merge_videos(self) -> str:
         """执行无损合并"""
-        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+        ffmpeg_path = get_ffmpeg_path()
         success_shots = [s for s in self.workflow.get("shots", []) if s["status"].get("video_generate") == "SUCCESS"]
         if not success_shots: raise RuntimeError("没有可合并的分镜视频。")
         success_shots.sort(key=lambda x: x["shot_id"])

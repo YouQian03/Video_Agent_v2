@@ -3,6 +3,8 @@ import argparse
 from pathlib import Path
 import shutil
 
+from core.utils import get_ffmpeg_path
+
 PROJECT_DIR = Path(__file__).parent
 DEFAULT_JOB_ID = "demo_job_001"
 
@@ -39,8 +41,8 @@ def mock_generate_video(job_dir: Path, shot: dict) -> str:
         raise FileNotFoundError(f"找不到源视频：{src_video}")
 
     # 直接复制会很大；为了快，我们复制一个小片段（用 ffmpeg）
-    # 你已经安装了 ffmpeg，但 PATH 可能不稳定，用绝对路径最稳
-    ffmpeg = "/opt/homebrew/bin/ffmpeg"
+    # 使用跨平台 ffmpeg 路径获取
+    ffmpeg = get_ffmpeg_path()
 
     import subprocess
     cmd = [
