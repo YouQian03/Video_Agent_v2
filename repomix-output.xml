@@ -1,10 +1,10 @@
-This file is a merged representation of a subset of the codebase, containing files not matching ignore patterns, combined into a single document by Repomix.
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
 
 <file_summary>
 This section contains a summary of this file.
 
 <purpose>
-This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+This file contains a packed representation of the entire repository's contents.
 It is designed to be easily consumable by AI systems for analysis, code review,
 or other automated processes.
 </purpose>
@@ -32,7 +32,6 @@ The content is organized as follows:
 <notes>
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Files matching these patterns are excluded: **/*.mp4, **/*.png, **/*.jpg, **/*.zip, **/venv/**, **/.venv/**, **/__pycache__/**, **/.git/**, all_code.txt, repomix-output.xml, repomix-output.txt, temp_uploads/**, jobs/**
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 - Files are sorted by Git change count (files with more changes are at the bottom)
@@ -48,6 +47,7 @@ core/
   agent_engine.py
   changes.py
   runner.py
+  utils.py
   workflow_io.py
   workflow_manager.py
 .gitignore
@@ -59,6 +59,9 @@ build_workflow.py
 extract_frames.py
 index.html
 merge_workflow.py
+nixpacks.toml
+railway.json
+requirements.txt
 run_workflow.py
 smoke_test_core.py
 stylize_frames.py
@@ -115,6 +118,35 @@ def replace_entity_reference(wf: dict, entity_id: str, new_ref_image: str) -> in
             shot.setdefault("status", {})["video_generate"] = "NOT_STARTED"
             affected += 1
     return affected
+</file>
+
+<file path="core/utils.py">
+# core/utils.py
+import shutil
+
+def get_ffmpeg_path() -> str:
+    """
+    跨平台获取 ffmpeg 路径
+    - Railway/Linux: 使用 PATH 中的 ffmpeg
+    - macOS 本地: 使用 Homebrew 路径
+    """
+    # 优先从 PATH 查找
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        return ffmpeg
+
+    # macOS Homebrew 备用路径
+    macos_path = "/opt/homebrew/bin/ffmpeg"
+    import os
+    if os.path.exists(macos_path):
+        return macos_path
+
+    # Intel Mac 备用路径
+    intel_mac_path = "/usr/local/bin/ffmpeg"
+    if os.path.exists(intel_mac_path):
+        return intel_mac_path
+
+    raise RuntimeError("ffmpeg not found. Please install ffmpeg.")
 </file>
 
 <file path="core/workflow_io.py">
@@ -193,140 +225,6 @@ def main():
 
 if __name__ == "__main__":
     import json
-    main()
-</file>
-
-<file path="analyze_video.py">
-import os
-import json
-import time
-from pathlib import Path
-from google import genai
-
-PROJECT_DIR = Path(__file__).parent
-VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
-OUT_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
-
-DIRECTOR_METAPROMPT = r"""
-请你扮演一位专业的影视分镜分析师，专注以「画面变化」为核心，
-将刚才的视频拆解为详细的分镜表。
-你必须严格按照JSON格式输出。
-根元素为包含多个分镜对象的JSON数组。
-每个对象包含：
-shot_number, frame_description, content_analysis,
-start_time, end_time, duration_seconds,
-shot_type, camera_angle, camera_movement,
-focus_and_depth, lighting, music_and_sound, voiceover。
-无信息请填 null。
-仅输出纯 JSON。
-""".strip()
-
-
-def ensure_api_key() -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "没有检测到 GEMINI_API_KEY 环境变量。\n"
-            "请在当前终端执行：\n"
-            '  export GEMINI_API_KEY="你的key"\n'
-            "然后再运行本脚本。"
-        )
-    return api_key
-
-
-def extract_json_array(text: str):
-    if not text:
-        raise ValueError("模型没有返回文本（response.text 为空）。")
-
-    s = text.strip()
-    if s.startswith("[") and s.endswith("]"):
-        return json.loads(s)
-
-    l = s.find("[")
-    r = s.rfind("]")
-    if l != -1 and r != -1 and r > l:
-        return json.loads(s[l : r + 1])
-
-    raise ValueError(
-        "未能从模型输出中提取 JSON 数组。\n"
-        "请把模型原始输出复制出来检查（它可能没有按要求输出 JSON）。"
-    )
-
-
-def wait_until_file_active(client: genai.Client, file_obj, timeout_s: int = 120, poll_s: int = 2):
-    """
-    Files API 上传后，文件可能处于 PROCESSING 状态，必须等到 ACTIVE 才能使用。
-    """
-    file_name = getattr(file_obj, "name", None)
-    if not file_name:
-        # 极少数情况下对象结构不同，直接返回试试
-        return file_obj
-
-    start = time.time()
-    last_state = None
-
-    while True:
-        f = client.files.get(name=file_name)
-        state = getattr(f, "state", None)
-
-        if state != last_state:
-            print(f"文件状态：{state}")
-            last_state = state
-
-        if state == "ACTIVE":
-            return f
-
-        if time.time() - start > timeout_s:
-            raise TimeoutError(
-                f"等待文件变为 ACTIVE 超时（>{timeout_s}s）。"
-                "你可以重试一次，或者换更小/更常见编码的 mp4。"
-            )
-
-        time.sleep(poll_s)
-
-
-def main():
-    api_key = ensure_api_key()
-
-    if not VIDEO_PATH.exists():
-        raise FileNotFoundError(
-            f"找不到视频文件：{VIDEO_PATH}\n"
-            "请确认你已把视频放到 downloads/ 里，并命名为 input.mp4"
-        )
-
-    size_mb = VIDEO_PATH.stat().st_size / (1024 * 1024)
-    print(f"准备处理视频：{VIDEO_PATH.name} ({size_mb:.1f} MB)")
-
-    client = genai.Client(api_key=api_key)
-
-    print("开始上传视频到 Files API…")
-    uploaded = client.files.upload(file=str(VIDEO_PATH))
-    print(f"✅ 上传完成：{uploaded.name}")
-
-    print("等待文件变为 ACTIVE…")
-    video_file = wait_until_file_active(client, uploaded, timeout_s=180, poll_s=2)
-    print("✅ 文件已 ACTIVE，可以开始分析")
-
-    print("开始分析视频（生成分镜 JSON）…")
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[DIRECTOR_METAPROMPT, video_file],
-    )
-
-    raw_text = getattr(response, "text", None) or ""
-    storyboard = extract_json_array(raw_text)
-
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUT_PATH.write_text(
-        json.dumps(storyboard, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    print(f"\n✅ 已生成分镜 JSON：{OUT_PATH}")
-    print(f"分镜数量：{len(storyboard)}")
-
-
-if __name__ == "__main__":
     main()
 </file>
 
@@ -510,88 +408,6 @@ if __name__ == "__main__":
     main()
 </file>
 
-<file path="extract_frames.py">
-import json
-import subprocess
-from pathlib import Path
-
-PROJECT_DIR = Path(__file__).parent
-VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
-STORYBOARD_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
-FRAMES_DIR = PROJECT_DIR / "frames"
-
-def to_seconds(t):
-    if t is None:
-        return None
-    if isinstance(t, (int, float)):
-        return float(t)
-
-    s = str(t).strip()
-    if not s:
-        return None
-
-    try:
-        return float(s)
-    except ValueError:
-        pass
-
-    parts = s.split(":")
-    try:
-        parts = [float(p) for p in parts]
-    except ValueError:
-        return None
-
-    if len(parts) == 3:
-        hh, mm, ss = parts
-        return hh * 3600 + mm * 60 + ss
-    if len(parts) == 2:
-        mm, ss = parts
-        return mm * 60 + ss
-    if len(parts) == 1:
-        return parts[0]
-    return None
-
-def main():
-    if not VIDEO_PATH.exists():
-        raise FileNotFoundError(f"找不到视频：{VIDEO_PATH}")
-    if not STORYBOARD_PATH.exists():
-        raise FileNotFoundError(f"找不到 storyboard：{STORYBOARD_PATH}")
-
-    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
-
-    storyboard = json.loads(STORYBOARD_PATH.read_text(encoding="utf-8"))
-    saved = 0
-
-    for shot in storyboard:
-        shot_num = shot.get("shot_number", saved + 1)
-        start_time = shot.get("start_time", None)
-        ts = to_seconds(start_time)
-
-        if ts is None:
-            continue
-
-        out_path = FRAMES_DIR / f"shot_{int(shot_num):02d}.png"
-
-        cmd = [
-            "/opt/homebrew/bin/ffmpeg",
-            "-y",
-            "-ss", str(ts),
-            "-i", str(VIDEO_PATH),
-            "-frames:v", "1",
-            "-q:v", "2",
-            str(out_path)
-        ]
-
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if out_path.exists():
-            saved += 1
-
-    print(f"✅ 截帧完成：{saved} 张，保存在 {FRAMES_DIR}")
-
-if __name__ == "__main__":
-    main()
-</file>
-
 <file path="merge_workflow.py">
 # merge_workflow.py
 import argparse
@@ -635,167 +451,27 @@ if __name__ == "__main__":
     main()
 </file>
 
-<file path="run_workflow.py">
-import json
-import argparse
-from pathlib import Path
-import shutil
+<file path="railway.json">
+{
+    "$schema": "https://railway.app/railway.schema.json",
+    "build": {
+      "builder": "NIXPACKS"
+    },
+    "deploy": {
+      "startCommand": "uvicorn app:app --host 0.0.0.0 --port $PORT",
+      "restartPolicyType": "ON_FAILURE",
+      "restartPolicyMaxRetries": 10
+    }
+  }
+</file>
 
-PROJECT_DIR = Path(__file__).parent
-DEFAULT_JOB_ID = "demo_job_001"
-
-def load_workflow(job_dir: Path) -> dict:
-    wf_path = job_dir / "workflow.json"
-    return json.loads(wf_path.read_text(encoding="utf-8"))
-
-def save_workflow(job_dir: Path, wf: dict) -> None:
-    wf_path = job_dir / "workflow.json"
-    wf_path.write_text(json.dumps(wf, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def find_shot(wf: dict, shot_id: str) -> dict | None:
-    for s in wf.get("shots", []):
-        if s.get("shot_id") == shot_id:
-            return s
-    return None
-
-def ensure_videos_dir(job_dir: Path) -> Path:
-    videos_dir = job_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
-    return videos_dir
-
-def mock_generate_video(job_dir: Path, shot: dict) -> str:
-    """
-    Demo 版本：生成一个“占位视频文件”，用来验证 runner 的工作方式。
-    后续接 Seedance/Veo 时，只需替换这个函数。
-    """
-    videos_dir = ensure_videos_dir(job_dir)
-    out_path = videos_dir / f"{shot['shot_id']}.mp4"
-
-    # 用 input.mp4 的前 1 秒复制成一个小文件（确保是可播放 mp4）
-    src_video = job_dir / "input.mp4"
-    if not src_video.exists():
-        raise FileNotFoundError(f"找不到源视频：{src_video}")
-
-    # 直接复制会很大；为了快，我们复制一个小片段（用 ffmpeg）
-    # 你已经安装了 ffmpeg，但 PATH 可能不稳定，用绝对路径最稳
-    ffmpeg = "/opt/homebrew/bin/ffmpeg"
-
-    import subprocess
-    cmd = [
-        ffmpeg, "-y",
-        "-i", str(src_video),
-        "-t", "1.0",
-        "-c", "copy",
-        str(out_path)
-    ]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    return f"videos/{out_path.name}"
-
-def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
-    """
-    执行 video_generate 节点：
-    - target_shot=None：跑所有 NOT_STARTED 或 FAILED 的 shot
-    - target_shot=shot_03：只跑指定 shot（单节点重跑）
-    """
-    shots = wf.get("shots", [])
-    for shot in shots:
-        sid = shot.get("shot_id")
-
-        if target_shot and sid != target_shot:
-            continue
-
-        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
-        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
-            continue
-
-        # 标记运行中
-        shot.setdefault("status", {})["video_generate"] = "RUNNING"
-        shot.setdefault("errors", {})["video_generate"] = None
-        save_workflow(job_dir, wf)
-
-        try:
-            rel_video_path = mock_generate_video(job_dir, shot)
-            shot.setdefault("assets", {})["video"] = rel_video_path
-            shot["status"]["video_generate"] = "SUCCESS"
-            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
-        except Exception as e:
-            shot["status"]["video_generate"] = "FAILED"
-            shot.setdefault("errors", {})["video_generate"] = str(e)
-            print(f"❌ video_generate FAILED: {sid} -> {e}")
-
-        save_workflow(job_dir, wf)
-
-def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
-    """
-    Demo 版风格化：把 first_frame 复制成新的 stylized_frame（覆盖写）。
-    后续接 Nano Banana 时，只替换这里。
-    """
-    src = job_dir / shot["assets"]["first_frame"]
-    if not src.exists():
-        raise FileNotFoundError(f"找不到 first_frame：{src}")
-
-    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(src, dst)
-    return f"stylized_frames/{dst.name}"
-
-def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
-    shots = wf.get("shots", [])
-    for shot in shots:
-        sid = shot.get("shot_id")
-
-        if target_shot and sid != target_shot:
-            continue
-
-        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
-        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
-            continue
-
-        shot.setdefault("status", {})["stylize"] = "RUNNING"
-        shot.setdefault("errors", {})["stylize"] = None
-        save_workflow(job_dir, wf)
-
-        try:
-            rel_path = mock_stylize_frame(job_dir, shot)
-            shot.setdefault("assets", {})["stylized_frame"] = rel_path
-            shot["status"]["stylize"] = "SUCCESS"
-            print(f"✅ stylize SUCCESS: {sid} -> {rel_path}")
-        except Exception as e:
-            shot["status"]["stylize"] = "FAILED"
-            shot.setdefault("errors", {})["stylize"] = str(e)
-            print(f"❌ stylize FAILED: {sid} -> {e}")
-
-        save_workflow(job_dir, wf)
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--job_id", default=DEFAULT_JOB_ID)
-    parser.add_argument("--node", choices=["video_generate"], default="video_generate")
-    parser.add_argument("--shot", default=None, help="只运行某个 shot，例如 shot_03")
-    args = parser.parse_args()
-
-    job_dir = PROJECT_DIR / "jobs" / args.job_id
-    if not job_dir.exists():
-        raise FileNotFoundError(f"找不到 job 目录：{job_dir}")
-
-    wf = load_workflow(job_dir)
-
-    if args.node == "video_generate":
-        # ① 先跑 stylize 节点
-        run_stylize(job_dir, wf, target_shot=args.shot)
-
-        # ② 重新加载 workflow（确保状态最新）
-        wf = load_workflow(job_dir)
-
-        # ③ 再跑 video_generate 节点
-        run_video_generate(job_dir, wf, target_shot=args.shot)
-
-
-    print("✅ runner 执行完成")
-
-if __name__ == "__main__":
-    main()
+<file path="requirements.txt">
+fastapi
+uvicorn[standard]
+python-multipart
+pillow
+requests
+google-genai
 </file>
 
 <file path="smoke_test_core.py">
@@ -819,101 +495,6 @@ def main():
     # 跑 pipeline（会按 NOT_STARTED 执行）
     run_pipeline(JOB_DIR)
     print("✅ run_pipeline ok")
-
-if __name__ == "__main__":
-    main()
-</file>
-
-<file path="stylize_frames.py">
-import os
-from pathlib import Path
-
-from google import genai
-from google.genai import types
-
-PROJECT_DIR = Path(__file__).parent
-FRAMES_DIR = PROJECT_DIR / "frames"
-OUT_DIR = PROJECT_DIR / "stylized_frames"
-OUT_DIR.mkdir(exist_ok=True)
-
-MODEL = "gemini-2.5-flash-image"  # Nano Banana（更快、更适合验证批量稳定性）
-# 如果你之后想用 Pro（更强、更贵）：MODEL = "gemini-3-pro-image-preview"
-
-PROMPT = """
-You are given a storyboard reference frame from a viral short video.
-
-Goal: "De-replication stylization" (same structure, new details).
-- Preserve: composition, camera angle, subject placement, overall color palette, lighting mood, and emotional tone.
-- Must change: all fine details must be newly designed (faces, clothing details, textures, materials, patterns, background objects, any text/logos).
-- Avoid pixel-level similarity. Do NOT copy any identifiable characters, logos, or exact text.
-- Keep it cinematic and coherent.
-
-Output:
-- 16:9 image
-- high clarity, rich details
-"""
-
-def save_first_image_from_response(response, out_path: Path) -> bool:
-    """
-    Nano Banana responses can include text parts and image parts.
-    We scan parts and save the first image we find.
-    """
-    for part in response.parts:
-        if part.inline_data is not None:
-            img = part.as_image()   # requires pillow
-            img.save(out_path)
-            return True
-    return False
-
-def main():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量（请先 export GEMINI_API_KEY=你的key）")
-
-    if not FRAMES_DIR.exists():
-        raise FileNotFoundError(f"找不到 frames 文件夹：{FRAMES_DIR}")
-
-    frame_paths = sorted(FRAMES_DIR.glob("shot_*.png"))
-    if not frame_paths:
-        raise FileNotFoundError(f"frames 里没有 shot_*.png：{FRAMES_DIR}")
-
-    client = genai.Client(api_key=api_key)
-
-    print(f"将处理 {len(frame_paths)} 张分镜图，输出到：{OUT_DIR}")
-
-    for img_path in frame_paths:
-        out_path = OUT_DIR / img_path.name
-
-        # 传入图片（官方推荐：types.Part.from_bytes）
-        image_part = types.Part.from_bytes(
-            data=img_path.read_bytes(),
-            mime_type="image/png",
-        )
-
-        print(f"🖼️  Stylize {img_path.name} ...")
-
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=[
-                image_part,
-                PROMPT
-            ],
-            # 可选：如果你用 gemini-3-pro-image-preview 想指定输出参数，可以打开下面 config
-            # config=types.GenerateContentConfig(
-            #     response_modalities=["TEXT", "IMAGE"],
-            #     image_config=types.ImageConfig(aspect_ratio="16:9", image_size="2K"),
-            # )
-        )
-
-        ok = save_first_image_from_response(response, out_path)
-        if ok:
-            print(f"✅ saved -> {out_path}")
-        else:
-            # 有时模型只回文字（表示没出图或被拒绝/降级），把文字打印出来便于你做可行性判断
-            print("⚠️ 没拿到图片输出，模型返回文本如下：")
-            print(response.text)
-
-    print("✅ 全部完成")
 
 if __name__ == "__main__":
     main()
@@ -1144,6 +725,611 @@ if __name__ == "__main__":
     main()
 </file>
 
+<file path="analyze_video.py">
+import os
+import json
+import time
+from pathlib import Path
+from google import genai
+
+PROJECT_DIR = Path(__file__).parent
+VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
+OUT_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
+
+DIRECTOR_METAPROMPT = r"""
+请你扮演一位专业的影视分镜分析师，将视频拆解为详细的分镜表。
+
+📋 【核心要求 - 语义分层】
+你必须将描述分为两个独立层次：
+
+🎭 **叙事层 (Narrative Layer)** - frame_description 字段：
+- 仅描述视觉内容：人物、物体、背景、环境、情节
+- ❌ 禁止包含任何技术性镜头语言（如"镜头推进"、"camera pans"）
+- ✅ 正确示例："A woman stands on a desolate beach at sunset, waves crashing behind her"
+- ❌ 错误示例："The camera slowly pans to reveal a woman on a beach"（包含技术描述）
+
+🎥 **技术层 (Technical Layer)** - 独立的元数据字段：
+- 所有镜头技术信息必须放入专用字段，不得混入叙事描述
+
+📐 【画幅约束】
+所有描述基于 16:9 宽屏电影画幅。
+
+🎬 【关键：摄影参数精准提取 - Cinematography Fidelity】
+你必须从源视频画面中精确分析并提取以下参数，这些参数将被硬编码到生成提示中：
+
+1️⃣ **景别 (Shot Scale)** - shot_scale 字段：
+   必须严格选择以下之一：
+   - "EXTREME_WIDE": 大远景，人物极小，环境为主
+   - "WIDE": 全景，完整人体可见，环境占比大
+   - "MEDIUM_WIDE": 中全景，膝盖以上可见
+   - "MEDIUM": 中景，腰部以上可见
+   - "MEDIUM_CLOSE": 中近景，胸部以上可见
+   - "CLOSE_UP": 特写，面部为主
+   - "EXTREME_CLOSE_UP": 大特写，眼睛/嘴唇等局部
+
+2️⃣ **主体画面坐标 (Subject Frame Position)** - subject_frame_position 字段：
+   必须精确描述主体在16:9画幅中的位置（使用九宫格坐标）：
+   - "top-left", "top-center", "top-right"
+   - "center-left", "center", "center-right"
+   - "bottom-left", "bottom-center", "bottom-right"
+   或更精确的描述如 "left-third-vertical-center", "right-third-lower"
+
+3️⃣ **主体朝向与视线 (Orientation & Gaze)** - subject_orientation 和 gaze_direction 字段：
+   subject_orientation（身体朝向）：
+   - "facing-camera": 正面面对镜头
+   - "back-to-camera": 背对镜头
+   - "profile-left": 左侧面（面朝画面左侧）
+   - "profile-right": 右侧面（面朝画面右侧）
+   - "three-quarter-left": 3/4侧面朝左
+   - "three-quarter-right": 3/4侧面朝右
+
+   gaze_direction（视线方向）：
+   - "looking-at-camera": 直视镜头
+   - "looking-left": 看向画面左侧
+   - "looking-right": 看向画面右侧
+   - "looking-up": 向上看
+   - "looking-down": 向下看
+   - "looking-off-screen-left": 看向画外左侧
+   - "looking-off-screen-right": 看向画外右侧
+
+4️⃣ **运动矢量 (Motion Vector)** - motion_vector 字段：
+   精确描述主体的运动方向和动作：
+   - "static": 静止不动
+   - "walking-left": 向画面左侧行走
+   - "walking-right": 向画面右侧行走
+   - "walking-toward-camera": 向镜头走来
+   - "walking-away-from-camera": 背向镜头走去
+   - "running-left/right": 奔跑方向
+   - "turning-left/right": 转身方向
+   - "gesturing-left/right": 手势方向
+   - 复合动作如 "walking-right-while-looking-left"
+
+你必须严格按照JSON格式输出。
+根元素为包含多个分镜对象的JSON数组。
+
+每个对象包含：
+=== 叙事层字段 ===
+- shot_number: 分镜序号
+- frame_description: 纯视觉叙事描述（禁止包含镜头技术词汇）
+- content_analysis: 场景内容与情节分析
+
+=== 摄影参数字段（必须精确填写）===
+- shot_scale: 景别（必填，从上述7个选项中选择）
+- subject_frame_position: 主体在画面中的精确坐标位置
+- subject_orientation: 主体身体朝向
+- gaze_direction: 主体视线方向
+- motion_vector: 运动矢量描述
+
+=== 技术层字段（元数据标签）===
+- camera_type: 镜头类型，如 "Static", "Dolly", "Pan", "Tilt", "Zoom", "Handheld", "Crane"
+- camera_movement: 镜头运动描述，如 "Slow push in", "Pan left to right", "Static"
+
+=== 时间与其他字段 ===
+- start_time, end_time, duration_seconds: 时间信息
+- shot_type, camera_angle: 景别与角度
+- focus_and_depth, lighting: 其他信息
+
+无信息请填 null。
+仅输出纯 JSON。
+""".strip()
+
+
+def ensure_api_key() -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "没有检测到 GEMINI_API_KEY 环境变量。\n"
+            "请在当前终端执行：\n"
+            '  export GEMINI_API_KEY="你的key"\n'
+            "然后再运行本脚本。"
+        )
+    return api_key
+
+
+def extract_json_array(text: str):
+    import re
+    if not text:
+        raise ValueError("模型没有返回文本（response.text 为空）。")
+
+    s = text.strip()
+
+    # Find JSON array bounds
+    l = s.find("[")
+    r = s.rfind("]")
+    if l == -1 or r == -1 or r <= l:
+        raise ValueError(
+            "未能从模型输出中提取 JSON 数组。\n"
+            "请把模型原始输出复制出来检查（它可能没有按要求输出 JSON）。"
+        )
+
+    json_str = s[l : r + 1]
+
+    # 🔧 Fix common JSON formatting issues from LLM output
+    # 1. Remove trailing commas before ] or }
+    json_str = re.sub(r',\s*]', ']', json_str)
+    json_str = re.sub(r',\s*}', '}', json_str)
+
+    # 2. Remove JavaScript-style comments
+    json_str = re.sub(r'//.*?\n', '\n', json_str)
+    json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
+
+    # 3. Fix unquoted keys (common LLM error)
+    # Match patterns like { key: or , key: and ensure key is quoted
+    json_str = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', json_str)
+
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        # Print debug info for troubleshooting
+        print(f"⚠️ JSON 解析失败，尝试进一步修复...")
+        print(f"错误位置: {e.msg} at line {e.lineno} col {e.colno}")
+
+        # 4. Last resort: try to fix single quotes
+        json_str_fixed = json_str.replace("'", '"')
+        try:
+            return json.loads(json_str_fixed)
+        except:
+            pass
+
+        raise ValueError(
+            f"JSON 解析失败: {e.msg}\n"
+            f"位置: line {e.lineno}, column {e.colno}\n"
+            "请检查模型输出格式。"
+        )
+
+
+def wait_until_file_active(client: genai.Client, file_obj, timeout_s: int = 120, poll_s: int = 2):
+    """
+    Files API 上传后，文件可能处于 PROCESSING 状态，必须等到 ACTIVE 才能使用。
+    """
+    file_name = getattr(file_obj, "name", None)
+    if not file_name:
+        # 极少数情况下对象结构不同，直接返回试试
+        return file_obj
+
+    start = time.time()
+    last_state = None
+
+    while True:
+        f = client.files.get(name=file_name)
+        state = getattr(f, "state", None)
+
+        if state != last_state:
+            print(f"文件状态：{state}")
+            last_state = state
+
+        if state == "ACTIVE":
+            return f
+
+        if time.time() - start > timeout_s:
+            raise TimeoutError(
+                f"等待文件变为 ACTIVE 超时（>{timeout_s}s）。"
+                "你可以重试一次，或者换更小/更常见编码的 mp4。"
+            )
+
+        time.sleep(poll_s)
+
+
+def main():
+    api_key = ensure_api_key()
+
+    if not VIDEO_PATH.exists():
+        raise FileNotFoundError(
+            f"找不到视频文件：{VIDEO_PATH}\n"
+            "请确认你已把视频放到 downloads/ 里，并命名为 input.mp4"
+        )
+
+    size_mb = VIDEO_PATH.stat().st_size / (1024 * 1024)
+    print(f"准备处理视频：{VIDEO_PATH.name} ({size_mb:.1f} MB)")
+
+    client = genai.Client(api_key=api_key)
+
+    print("开始上传视频到 Files API…")
+    uploaded = client.files.upload(file=str(VIDEO_PATH))
+    print(f"✅ 上传完成：{uploaded.name}")
+
+    print("等待文件变为 ACTIVE…")
+    video_file = wait_until_file_active(client, uploaded, timeout_s=180, poll_s=2)
+    print("✅ 文件已 ACTIVE，可以开始分析")
+
+    print("开始分析视频（生成分镜 JSON）…")
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[DIRECTOR_METAPROMPT, video_file],
+    )
+
+    raw_text = getattr(response, "text", None) or ""
+    storyboard = extract_json_array(raw_text)
+
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUT_PATH.write_text(
+        json.dumps(storyboard, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print(f"\n✅ 已生成分镜 JSON：{OUT_PATH}")
+    print(f"分镜数量：{len(storyboard)}")
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="extract_frames.py">
+import json
+import subprocess
+from pathlib import Path
+
+from core.utils import get_ffmpeg_path
+
+PROJECT_DIR = Path(__file__).parent
+VIDEO_PATH = PROJECT_DIR / "downloads" / "input.mp4"
+STORYBOARD_PATH = PROJECT_DIR / "outputs" / "storyboard.json"
+FRAMES_DIR = PROJECT_DIR / "frames"
+
+def to_seconds(t):
+    if t is None:
+        return None
+    if isinstance(t, (int, float)):
+        return float(t)
+
+    s = str(t).strip()
+    if not s:
+        return None
+
+    try:
+        return float(s)
+    except ValueError:
+        pass
+
+    parts = s.split(":")
+    try:
+        parts = [float(p) for p in parts]
+    except ValueError:
+        return None
+
+    if len(parts) == 3:
+        hh, mm, ss = parts
+        return hh * 3600 + mm * 60 + ss
+    if len(parts) == 2:
+        mm, ss = parts
+        return mm * 60 + ss
+    if len(parts) == 1:
+        return parts[0]
+    return None
+
+def main():
+    if not VIDEO_PATH.exists():
+        raise FileNotFoundError(f"找不到视频：{VIDEO_PATH}")
+    if not STORYBOARD_PATH.exists():
+        raise FileNotFoundError(f"找不到 storyboard：{STORYBOARD_PATH}")
+
+    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+    storyboard = json.loads(STORYBOARD_PATH.read_text(encoding="utf-8"))
+    saved = 0
+
+    for shot in storyboard:
+        shot_num = shot.get("shot_number", saved + 1)
+        start_time = shot.get("start_time", None)
+        ts = to_seconds(start_time)
+
+        if ts is None:
+            continue
+
+        out_path = FRAMES_DIR / f"shot_{int(shot_num):02d}.png"
+
+        cmd = [
+            get_ffmpeg_path(),
+            "-y",
+            "-ss", str(ts),
+            "-i", str(VIDEO_PATH),
+            "-frames:v", "1",
+            "-q:v", "2",
+            str(out_path)
+        ]
+
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if out_path.exists():
+            saved += 1
+
+    print(f"✅ 截帧完成：{saved} 张，保存在 {FRAMES_DIR}")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="run_workflow.py">
+import json
+import argparse
+from pathlib import Path
+import shutil
+
+from core.utils import get_ffmpeg_path
+
+PROJECT_DIR = Path(__file__).parent
+DEFAULT_JOB_ID = "demo_job_001"
+
+def load_workflow(job_dir: Path) -> dict:
+    wf_path = job_dir / "workflow.json"
+    return json.loads(wf_path.read_text(encoding="utf-8"))
+
+def save_workflow(job_dir: Path, wf: dict) -> None:
+    wf_path = job_dir / "workflow.json"
+    wf_path.write_text(json.dumps(wf, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def find_shot(wf: dict, shot_id: str) -> dict | None:
+    for s in wf.get("shots", []):
+        if s.get("shot_id") == shot_id:
+            return s
+    return None
+
+def ensure_videos_dir(job_dir: Path) -> Path:
+    videos_dir = job_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+def mock_generate_video(job_dir: Path, shot: dict) -> str:
+    """
+    Demo 版本：生成一个“占位视频文件”，用来验证 runner 的工作方式。
+    后续接 Seedance/Veo 时，只需替换这个函数。
+    """
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+
+    # 用 input.mp4 的前 1 秒复制成一个小文件（确保是可播放 mp4）
+    src_video = job_dir / "input.mp4"
+    if not src_video.exists():
+        raise FileNotFoundError(f"找不到源视频：{src_video}")
+
+    # 直接复制会很大；为了快，我们复制一个小片段（用 ffmpeg）
+    # 使用跨平台 ffmpeg 路径获取
+    ffmpeg = get_ffmpeg_path()
+
+    import subprocess
+    cmd = [
+        ffmpeg, "-y",
+        "-i", str(src_video),
+        "-t", "1.0",
+        "-c", "copy",
+        str(out_path)
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    return f"videos/{out_path.name}"
+
+def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    """
+    执行 video_generate 节点：
+    - target_shot=None：跑所有 NOT_STARTED 或 FAILED 的 shot
+    - target_shot=shot_03：只跑指定 shot（单节点重跑）
+    """
+    shots = wf.get("shots", [])
+    for shot in shots:
+        sid = shot.get("shot_id")
+
+        if target_shot and sid != target_shot:
+            continue
+
+        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
+            continue
+
+        # 标记运行中
+        shot.setdefault("status", {})["video_generate"] = "RUNNING"
+        shot.setdefault("errors", {})["video_generate"] = None
+        save_workflow(job_dir, wf)
+
+        try:
+            rel_video_path = mock_generate_video(job_dir, shot)
+            shot.setdefault("assets", {})["video"] = rel_video_path
+            shot["status"]["video_generate"] = "SUCCESS"
+            print(f"✅ video_generate SUCCESS: {sid} -> {rel_video_path}")
+        except Exception as e:
+            shot["status"]["video_generate"] = "FAILED"
+            shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ video_generate FAILED: {sid} -> {e}")
+
+        save_workflow(job_dir, wf)
+
+def mock_stylize_frame(job_dir: Path, shot: dict) -> str:
+    """
+    Demo 版风格化：把 first_frame 复制成新的 stylized_frame（覆盖写）。
+    后续接 Nano Banana 时，只替换这里。
+    """
+    src = job_dir / shot["assets"]["first_frame"]
+    if not src.exists():
+        raise FileNotFoundError(f"找不到 first_frame：{src}")
+
+    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    return f"stylized_frames/{dst.name}"
+
+def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots = wf.get("shots", [])
+    for shot in shots:
+        sid = shot.get("shot_id")
+
+        if target_shot and sid != target_shot:
+            continue
+
+        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"):
+            continue
+
+        shot.setdefault("status", {})["stylize"] = "RUNNING"
+        shot.setdefault("errors", {})["stylize"] = None
+        save_workflow(job_dir, wf)
+
+        try:
+            rel_path = mock_stylize_frame(job_dir, shot)
+            shot.setdefault("assets", {})["stylized_frame"] = rel_path
+            shot["status"]["stylize"] = "SUCCESS"
+            print(f"✅ stylize SUCCESS: {sid} -> {rel_path}")
+        except Exception as e:
+            shot["status"]["stylize"] = "FAILED"
+            shot.setdefault("errors", {})["stylize"] = str(e)
+            print(f"❌ stylize FAILED: {sid} -> {e}")
+
+        save_workflow(job_dir, wf)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job_id", default=DEFAULT_JOB_ID)
+    parser.add_argument("--node", choices=["video_generate"], default="video_generate")
+    parser.add_argument("--shot", default=None, help="只运行某个 shot，例如 shot_03")
+    args = parser.parse_args()
+
+    job_dir = PROJECT_DIR / "jobs" / args.job_id
+    if not job_dir.exists():
+        raise FileNotFoundError(f"找不到 job 目录：{job_dir}")
+
+    wf = load_workflow(job_dir)
+
+    if args.node == "video_generate":
+        # ① 先跑 stylize 节点
+        run_stylize(job_dir, wf, target_shot=args.shot)
+
+        # ② 重新加载 workflow（确保状态最新）
+        wf = load_workflow(job_dir)
+
+        # ③ 再跑 video_generate 节点
+        run_video_generate(job_dir, wf, target_shot=args.shot)
+
+
+    print("✅ runner 执行完成")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="stylize_frames.py">
+import os
+from pathlib import Path
+
+from google import genai
+from google.genai import types
+
+PROJECT_DIR = Path(__file__).parent
+FRAMES_DIR = PROJECT_DIR / "frames"
+OUT_DIR = PROJECT_DIR / "stylized_frames"
+OUT_DIR.mkdir(exist_ok=True)
+
+MODEL = "gemini-2.5-flash-image"  # Nano Banana（验证批量稳定性）
+# 如果之后用 Pro：MODEL = "gemini-3-pro-image-preview"
+
+PROMPT = """
+You are given a storyboard reference frame from a viral short video.
+
+Goal: "De-replication stylization" (same structure, new details).
+- Preserve: composition, camera angle, subject placement, overall color palette, lighting mood, and emotional tone.
+- Must change: all fine details must be newly designed (faces, clothing details, textures, materials, patterns, background objects, any text/logos).
+- Avoid pixel-level similarity. Do NOT copy any identifiable characters, logos, or exact text.
+- Keep it cinematic and coherent.
+
+Output:
+- 16:9 image
+- high clarity, rich details
+"""
+
+def save_first_image_from_response(response, out_path: Path) -> bool:
+    """
+    Nano Banana responses can include text parts and image parts.
+    We scan parts and save the first image we find.
+    """
+    for part in response.parts:
+        if part.inline_data is not None:
+            img = part.as_image()   # requires pillow
+            img.save(out_path)
+            return True
+    return False
+
+def main():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("没有检测到 GEMINI_API_KEY 环境变量（请先 export GEMINI_API_KEY=你的key）")
+
+    if not FRAMES_DIR.exists():
+        raise FileNotFoundError(f"找不到 frames 文件夹：{FRAMES_DIR}")
+
+    frame_paths = sorted(FRAMES_DIR.glob("shot_*.png"))
+    if not frame_paths:
+        raise FileNotFoundError(f"frames 里没有 shot_*.png：{FRAMES_DIR}")
+
+    client = genai.Client(api_key=api_key)
+
+    print(f"将处理 {len(frame_paths)} 张分镜图，输出到：{OUT_DIR}")
+
+    for img_path in frame_paths:
+        out_path = OUT_DIR / img_path.name
+
+        # 传入图片（官方推荐：types.Part.from_bytes）
+        image_part = types.Part.from_bytes(
+            data=img_path.read_bytes(),
+            mime_type="image/png",
+        )
+
+        print(f"🖼️  Stylize {img_path.name} ...")
+
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                image_part,
+                PROMPT
+            ],
+            # 可选：如果你用 gemini-3-pro-image-preview 想指定输出参数，可以打开下面 config
+            # config=types.GenerateContentConfig(
+            #     response_modalities=["TEXT", "IMAGE"],
+            #     image_config=types.ImageConfig(aspect_ratio="16:9", image_size="2K"),
+            # )
+        )
+
+        ok = save_first_image_from_response(response, out_path)
+        if ok:
+            print(f"✅ saved -> {out_path}")
+        else:
+            # 有时模型只回文字（表示没出图或被拒绝/降级），把文字打印出来便于你做可行性判断
+            print("⚠️ 没拿到图片输出，模型返回文本如下：")
+            print(response.text)
+
+    print("✅ 全部完成")
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="nixpacks.toml">
+[phases.setup]
+nixPkgs = ["python312", "ffmpeg"]
+
+[phases.install]
+cmds = ["python -m venv --copies /opt/venv", ". /opt/venv/bin/activate", "pip install -r requirements.txt"]
+
+[start]
+cmd = "uvicorn app:app --host 0.0.0.0 --port $PORT"
+</file>
+
 <file path="core/agent_engine.py">
 # core/agent_engine.py
 import os
@@ -1168,17 +1354,91 @@ class AgentEngine:
 [当前工作流状态摘要]
 {workflow_summary}
 
+🎬 [摄影参数保真原则 - CINEMATOGRAPHY FIDELITY - 最高优先级]
+每个分镜都有从源视频中提取的摄影参数（标签形式存储在描述中），这些参数必须被保护：
+- [SCALE: ...] - 景别（WIDE/MEDIUM/CLOSE_UP等）
+- [POSITION: ...] - 主体在画面中的位置坐标
+- [ORIENTATION: ...] - 主体身体朝向
+- [GAZE: ...] - 主体视线方向
+- [MOTION: ...] - 运动矢量
+
+⚠️ 除非用户明确要求修改这些摄影参数，否则任何操作都必须保留它们不变！
+- 风格修改：只改变艺术风格，不改变摄影参数
+- 主体替换：只替换主体名词，保留所有摄影参数标签
+- 描述增强：只添加新内容，不删除或修改现有摄影参数标签
+
 [指令逻辑规范 - 极其重要]
-1. 修改全局风格: {{"op": "set_global_style", "value": "英文风格描述词"}}
-2. 全局主体替换: {{"op": "global_subject_swap", "old_subject": "英文原词", "new_subject": "英文新词"}}
-   - 方向逻辑：“把 A 换成 B”意味着 A 是旧的(old)，B 是新的(new)。
-   - 匹配要求：你必须观察 [摘要] 中的 "Example Shot Description"，找出其中真正存在的英文单词作为 "old_subject"。
-   - 翻译要求：如果用户说“男人”，而摘要里是 "man"，请使用 "man"；如果用户说“小孩”，请翻译为 "child"。
+1. 修改全局风格: {{"op": "set_global_style", "value": "风格关键词"}}
+   - 🎨 风格输出格式：value 字段必须是简洁的风格关键词，禁止使用冗长句子
+     * ✅ 正确: "Cyberpunk Neon"
+     * ✅ 正确: "Studio Ghibli Anime"
+     * ✅ 正确: "Film Noir Cinematic"
+     * ✅ 正确: "Watercolor Impressionist"
+     * ❌ 错误: "Total transformation into Cyberpunk Neon style"（禁止使用填充词）
+     * ❌ 错误: "Hyper-stylized in Studio Ghibli anime aesthetic"（禁止冗长描述）
+   - 📐 画幅约束由系统自动强制 16:9，无需在 value 中指定
+   - 🎬 摄影保真：风格修改不会影响摄影参数，系统会自动保留
+
+🆔 [全局身份锚定 - GLOBAL IDENTITY ANCHOR - 角色一致性原则]
+当用户定义一个具体角色（如"金色短发的女人"），该描述将成为全局身份锚定(Global Identity Anchor)。
+- ✅ 系统会自动将完全相同的角色描述传播到所有相关分镜，确保视觉一致性
+- ✅ 角色特征（发型、发色、服装等）在所有主角镜头中保持100%一致
+- ⚠️ 智能场景检测：系统会自动跳过以下类型的分镜（不注入角色）：
+  * 纯风景/环境镜头（landscape, cityscape, nature scene）
+  * 空场景/建筑内景（empty room, establishing shot）
+  * 物体特写（object close-up, food, vehicle）
+  * 无人物的过渡镜头
+
+2. 全局主体替换（简单）: {{"op": "global_subject_swap", "old_subject": "英文原词", "new_subject": "英文新词"}}
+   - 方向逻辑："把 A 换成 B"意味着 A 是旧的(old)，B 是新的(new)。
+   - 匹配要求：你必须观察 [摘要] 中的 Shot Descriptions，找出其中真正存在的英文单词作为 "old_subject"。
+   - 翻译要求：如果用户说"男人"，而摘要里是 "man"，请使用 "man"；如果用户说"小孩"，请翻译为 "child"。
+   - 🎬 摄影保真：主体替换时，所有摄影参数标签会被自动保留（位置、朝向、视线、动作不变）
+   - 🆔 身份锚定：系统自动处理，风景/空镜头会被智能跳过
+   - ⚠️ 仅用于无属性描述的简单替换（如"把男人换成女人"）
+
+2b. 🎨 细粒度角色替换（带视觉属性）: {{"op": "detailed_subject_swap", "old_subject": "英文原词", "new_subject": "英文新主体", "attributes": {{...}}}}
+   - 🔍 触发条件：当用户提供详细的视觉描述时使用此操作，例如：
+     * "把男人换成一个金色短发、穿红衣服的女人"
+     * "Replace the man with a young woman with blue eyes and silver hair"
+     * "把小孩换成一个戴眼镜的老人"
+   - 📝 attributes 对象必须提取所有视觉描述符（只填写用户明确提到的）：
+     {{
+       "hair_style": "short/long/curly/straight/bald/ponytail...",
+       "hair_color": "golden/black/brown/silver/red/blonde...",
+       "eye_color": "blue/green/brown/hazel...",
+       "skin_tone": "fair/tan/dark/pale...",
+       "age_descriptor": "young/elderly/middle-aged/child...",
+       "clothing": "red dress/black suit/white shirt/casual attire...",
+       "accessories": "glasses/hat/necklace/earrings...",
+       "body_type": "slim/muscular/petite/tall...",
+       "facial_features": "beard/freckles/scar/dimples...",
+       "other_visual": "任何其他视觉特征..."
+     }}
+   - ⚠️ 只填写用户明确提到的属性，未提及的属性不要添加
+   - 🎬 摄影保真：所有视觉属性将被注入叙事层，但摄影参数标签保持不变
+   - 🆔 身份锚定：角色描述将作为Global Identity Anchor存储，并传播到所有主角分镜
+   - 🏞️ 场景保护：风景/空镜头自动跳过，保持原始语义意图
+
+3. 增强分镜描述: {{"op": "enhance_shot_description", "shot_id": "shot_XX", "spatial_info": "空间位置描述", "style_boost": "风格强化描述"}}
+   - 📐 空间感知（必须保持 16:9 宽屏构图）：
+     * "subject positioned on the left side of the 16:9 widescreen frame"
+     * "character facing right in cinematic widescreen composition"
+     * "object in the foreground, widescreen depth of field"
+     * "centered composition with 16:9 cinematic framing"
+   - ⚠️ 严禁任何 1:1 正方形或竖屏构图描述
+   - 🎬 摄影保真：增强描述时，现有的摄影参数标签会被自动保留
+
+4. 修改摄影参数（仅当用户明确要求时使用）: {{"op": "update_cinematography", "shot_id": "shot_XX", "param": "参数名", "value": "新值"}}
+   - 参数名可以是: "shot_scale", "subject_frame_position", "subject_orientation", "gaze_direction", "motion_vector"
+   - ⚠️ 只有当用户明确说"把镜头改成特写"、"让人物转向左边"等明确修改摄影参数的指令时才使用此操作
 
 [输出要求]
 - 必须识别用户的所有意图。
 - 必须返回一个包含指令对象的 JSON 列表 []，即使只有一条指令也要放在列表里。
 - 严禁输出任何解释性文字，只输出纯 JSON 字符串。
+- set_global_style 的 value 必须是 2-4 个单词的简洁风格关键词，禁止使用 "Total transformation"、"Hyper-stylized"、"Complete overhaul" 等填充句式。
+- 默认保护摄影参数，除非用户明确要求修改。
 """
         try:
             # 💡 强制 JSON 模式，确保输出结构稳定
@@ -1222,6 +1482,8 @@ from core.workflow_manager import WorkflowManager
 from core.agent_engine import AgentEngine
 
 app = FastAPI(title="AI 导演工作台 API")
+Path("jobs").mkdir(parents=True, exist_ok=True)
+Path("temp_uploads").mkdir(parents=True, exist_ok=True)
 
 # 1. 跨域配置
 app.add_middleware(
@@ -1306,8 +1568,14 @@ async def agent_chat(req: ChatRequest):
     # 先同步磁盘数据到内存
     wf = manager.load()
     
-    example_desc = wf.get("shots")[0].get("description", "") if wf.get("shots") else ""
-    summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\nSample Desc: {example_desc}"
+    # 💡 必须包含所有分镜描述，Agent 才能找到所有主体进行替换
+    all_descriptions = []
+    for i, shot in enumerate(wf.get("shots", [])):
+        desc = shot.get("description", "")
+        if desc:
+            all_descriptions.append(f"Shot {i+1}: {desc}")
+    descriptions_text = "\n".join(all_descriptions) if all_descriptions else "No shots"
+    summary = f"Job ID: {manager.job_id}\nGlobal Style: {wf.get('global', {}).get('style_prompt')}\n\n[All Shot Descriptions]\n{descriptions_text}"
     
     action = agent.get_action_from_text(req.message, summary)
     if isinstance(action, list) or (isinstance(action, dict) and action.get("op") != "error"):
@@ -1366,245 +1634,12 @@ async def add_no_cache_header(request, call_next):
     return response
 
 # 挂载静态资源目录
-app.mount("/assets", StaticFiles(directory="jobs"), name="assets")
+app.mount("/assets", StaticFiles(directory="jobs", check_dir=False), name="assets")
 
 if __name__ == "__main__":
     import uvicorn
     # 启动服务
     uvicorn.run(app, host="0.0.0.0", port=8000)
-</file>
-
-<file path="core/runner.py">
-# core/runner.py
-from pathlib import Path
-import shutil
-import subprocess
-import time
-import os
-import requests 
-import io
-from PIL import Image
-
-from .workflow_io import save_workflow, load_workflow
-
-
-def ensure_videos_dir(job_dir: Path) -> Path:
-    videos_dir = job_dir / "videos"
-    videos_dir.mkdir(parents=True, exist_ok=True)
-    return videos_dir
-
-
-def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
-    """
-    💡 使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
-    """
-    from google import genai
-    from google.genai import types
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
-    
-    src = job_dir / shot["assets"]["first_frame"]
-    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-
-    if dst.exists(): os.remove(dst)
-
-    global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
-    description = shot.get("description", "")
-    prompt = f"A professional stylized storyboard frame. Subject: {description}. Art Style: {global_style}. High resolution, 16:9 cinematic framing."
-
-    print(f"🖼️  AI 正在尝试生成定妆图: {shot['shot_id']}")
-
-    try:
-        print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
-        response = client.models.generate_images(
-            model="models/imagen-4.0-generate-001",
-            prompt=prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="16:9"
-            )
-        )
-        if response.generated_images:
-            gen_img = response.generated_images[0]
-            if hasattr(gen_img.image, 'save'):
-                gen_img.image.save(dst)
-            else:
-                with open(dst, 'wb') as f: f.write(gen_img.image.image_bytes)
-            print(f"✅ 使用 Imagen 4.0 生成成功！")
-            return f"stylized_frames/{dst.name}"
-    except Exception as e:
-        print(f"⚠️ Imagen 4.0 调用失败: {str(e)[:100]}...")
-
-    try:
-        print(f"📡 尝试调用集成生图模型 (models/gemini-2.0-flash-exp-image-generation)...")
-        response = client.models.generate_content(
-            model="models/gemini-2.0-flash-exp-image-generation",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"]
-            )
-        )
-        for part in response.parts:
-            if part.inline_data is not None:
-                img = Image.open(io.BytesIO(part.inline_data.data))
-                img.save(dst)
-                print(f"✅ 使用 Gemini 2.0 集成模型生成成功！")
-                return f"stylized_frames/{dst.name}"
-    except Exception as e:
-        print(f"❌ 所有生图模型均失败: {str(e)[:100]}...")
-
-    print("⚠️ 执行原图占位。")
-    shutil.copyfile(src, dst)
-    return f"stylized_frames/{dst.name}"
-
-
-def mock_generate_video(job_dir: Path, shot: dict) -> str:
-    videos_dir = ensure_videos_dir(job_dir)
-    out_path = videos_dir / f"{shot['shot_id']}.mp4"
-    if out_path.exists(): os.remove(out_path)
-    src_video = job_dir / "input.mp4"
-    ffmpeg = "/opt/homebrew/bin/ffmpeg"
-    cmd = [ffmpeg, "-y", "-i", str(src_video), "-t", "1.0", "-c", "copy", str(out_path)]
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return f"videos/{out_path.name}"
-
-
-def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
-    from google import genai
-    from google.genai import types
-
-    api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
-
-    videos_dir = ensure_videos_dir(job_dir)
-    out_path = videos_dir / f"{shot['shot_id']}.mp4"
-    if out_path.exists(): os.remove(out_path)
-
-    img_rel = shot.get("assets", {}).get("stylized_frame") or f"stylized_frames/{shot['shot_id']}.png"
-    img_path = job_dir / img_rel
-
-    if not img_path.exists():
-        ai_stylize_frame(job_dir, wf, shot)
-
-    print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
-    
-    try:
-        operation = client.models.generate_videos(
-            model="models/veo-3.1-generate-preview", 
-            prompt=f"Cinematic video, {shot.get('description', '')}. Style: {wf.get('global', {}).get('style_prompt', '')}.",
-            image=types.Image(
-                image_bytes=img_path.read_bytes(),
-                mime_type="image/png"
-            ),
-            config=types.GenerateVideosConfig(
-                number_of_videos=1,
-                duration_seconds=6.0
-            ),
-        )
-
-        while not operation.done:
-            time.sleep(20)
-            operation = client.operations.get(operation.name)
-            print(f"⏳ 视频渲染中...")
-
-        if operation.error:
-            raise RuntimeError(f"Veo 后端报错: {operation.error}")
-
-        resp = operation.response
-        if resp is None or not hasattr(resp, 'generated_videos') or not resp.generated_videos:
-            raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
-
-        # 💡 核心修复：处理 video 字段可能是 str 也可能是 Object 的情况
-        video_output = resp.generated_videos[0].video
-        file_id = None
-        
-        if isinstance(video_output, str):
-            # 如果直接返回的是字符串 ID
-            file_id = video_output
-        else:
-            # 如果返回的是对象，尝试多种取值方式
-            file_id = getattr(video_output, 'name', None)
-            if not file_id and hasattr(video_output, 'uri'):
-                # 兼容 URI 格式: https://.../files/xyz -> files/xyz
-                file_id = f"files/{video_output.uri.split('/')[-1]}"
-        
-        if not file_id:
-            raise RuntimeError(f"无法从响应中解析有效的 File ID: {video_output}")
-
-        # 确保 ID 格式正确 (必须包含 files/ 前缀)
-        if '/' not in file_id:
-            file_id = f"files/{file_id}"
-
-        print(f"✅ 生成成功，正在下载文件: {file_id}")
-        
-        download_url = f"https://generativelanguage.googleapis.com/v1beta/{file_id}"
-        query_params = {'alt': 'media', 'key': api_key}
-        response = requests.get(download_url, params=query_params, stream=True)
-        
-        if response.status_code == 200:
-            with open(out_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1024*1024): f.write(chunk)
-            print(f"💾 视频生成成功: {out_path}")
-            return f"videos/{out_path.name}"
-        else:
-            raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
-    except Exception as e:
-        print(f"❌ Veo 失败: {str(e)}")
-        raise e
-
-
-def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
-    for shot in wf.get("shots", []):
-        sid = shot.get("shot_id")
-        if target_shot and sid != target_shot: continue
-        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
-        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
-        
-        shot.setdefault("status", {})["stylize"] = "RUNNING"
-        save_workflow(job_dir, wf)
-        try:
-            rel_path = ai_stylize_frame(job_dir, wf, shot)
-            shot.setdefault("assets", {})["stylized_frame"] = rel_path
-            shot["status"]["stylize"] = "SUCCESS"
-            print(f"✅ Stylize SUCCESS: {sid}")
-        except Exception as e:
-            shot["status"]["stylize"] = "FAILED"
-            shot.setdefault("errors", {})["stylize"] = str(e)
-        save_workflow(job_dir, wf)
-
-
-def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
-    for shot in wf.get("shots", []):
-        sid = shot.get("shot_id")
-        if target_shot and sid != target_shot: continue
-        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
-        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
-        
-        shot.setdefault("status", {})["video_generate"] = "RUNNING"
-        save_workflow(job_dir, wf)
-        try:
-            video_model = wf.get("global", {}).get("video_model", "mock")
-            if video_model == "veo":
-                rel_video_path = veo_generate_video(job_dir, wf, shot)
-            else:
-                rel_video_path = mock_generate_video(job_dir, shot)
-            shot.setdefault("assets", {})["video"] = rel_video_path
-            shot["status"]["video_generate"] = "SUCCESS"
-            print(f"✅ Video SUCCESS: {sid}")
-        except Exception as e:
-            shot["status"]["video_generate"] = "FAILED"
-            shot.setdefault("errors", {})["video_generate"] = str(e)
-            print(f"❌ Video FAILED: {sid} -> {e}")
-        save_workflow(job_dir, wf)
-
-
-def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
-    wf = load_workflow(job_dir)
-    run_stylize(job_dir, wf, target_shot=target_shot)
-    wf = load_workflow(job_dir)
-    run_video_generate(job_dir, wf, target_shot=target_shot)
 </file>
 
 <file path="core/workflow_manager.py">
@@ -1622,6 +1657,7 @@ from typing import Dict, List, Any, Optional, Union
 from core.workflow_io import load_workflow, save_workflow
 from core.changes import apply_global_style, replace_entity_reference
 from core.runner import run_pipeline, run_stylize, run_video_generate
+from core.utils import get_ffmpeg_path
 
 # 引入拆解所需的库和逻辑
 from google import genai
@@ -1664,11 +1700,55 @@ class WorkflowManager:
         for s in storyboard:
             shot_num = int(s.get("shot_number", 1))
             sid = f"shot_{shot_num:02d}"
+
+            # 📋 Semantic Split: Narrative Layer (plot) + Technical Layer (metadata tags)
+            # Narrative Layer - Pure visual/plot description (no camera technical terms)
+            narrative_desc = s.get("frame_description") or s.get("content_analysis") or ""
+
+            # 🎬 Cinematography Fidelity Parameters - Hard-coded constraints from source analysis
+            shot_scale = s.get("shot_scale", "")
+            subject_frame_position = s.get("subject_frame_position", "")
+            subject_orientation = s.get("subject_orientation", "")
+            gaze_direction = s.get("gaze_direction", "")
+            motion_vector = s.get("motion_vector", "")
+            camera_type = s.get("camera_type") or s.get("camera_movement", "")
+
+            # Build structured description with HARD-CODED cinematography constraints
+            desc_lines = [narrative_desc]
+
+            # 🎯 CRITICAL: These are non-negotiable constraints that MUST be preserved
+            if shot_scale:
+                desc_lines.append(f"[SCALE: {shot_scale}]")
+            if subject_frame_position:
+                desc_lines.append(f"[POSITION: {subject_frame_position}]")
+            if subject_orientation:
+                desc_lines.append(f"[ORIENTATION: {subject_orientation}]")
+            if gaze_direction:
+                desc_lines.append(f"[GAZE: {gaze_direction}]")
+            if motion_vector:
+                desc_lines.append(f"[MOTION: {motion_vector}]")
+            if camera_type:
+                desc_lines.append(f"[CAMERA: {camera_type}]")
+
+            # Join with newlines for clear separation
+            full_description = "\n".join(desc_lines)
+
+            # 💾 Store raw cinematography data for downstream enforcement
+            cinematography_data = {
+                "shot_scale": shot_scale,
+                "subject_frame_position": subject_frame_position,
+                "subject_orientation": subject_orientation,
+                "gaze_direction": gaze_direction,
+                "motion_vector": motion_vector,
+                "camera_type": camera_type
+            }
+
             shots.append({
                 "shot_id": sid,
                 "start_time": s.get("start_time"),
                 "end_time": s.get("end_time"),
-                "description": s.get("frame_description") or s.get("content_analysis"),
+                "description": full_description,
+                "cinematography": cinematography_data,  # 🎬 Hard-coded source cinematography for fidelity enforcement
                 "entities": [],
                 "assets": {
                     "first_frame": f"frames/{sid}.png",
@@ -1707,18 +1787,164 @@ class WorkflowManager:
             model="gemini-2.0-flash",
             contents=[DIRECTOR_METAPROMPT, video_file],
         )
-        return extract_json_array(response.text)
+        raw_shots = extract_json_array(response.text)
+
+        # 语义化合并：减少过度分镜
+        merged_shots = self._merge_semantic_shots(raw_shots, client)
+        return merged_shots
+
+    def _merge_semantic_shots(self, shots: List[Dict], client) -> List[Dict]:
+        """
+        语义化合并：将连续的、背景/角度/主体相似的分镜合并为一个完整分镜。
+        使用 AI 判断哪些连续分镜应该合并。
+        """
+        if len(shots) <= 1:
+            return shots
+
+        # 构建合并判断提示
+        shots_summary = []
+        for i, s in enumerate(shots):
+            shots_summary.append({
+                "index": i,
+                "start_time": s.get("start_time"),
+                "end_time": s.get("end_time"),
+                "description": s.get("frame_description") or s.get("content_analysis"),
+                "shot_type": s.get("shot_type"),
+                "camera_angle": s.get("camera_angle"),
+                "camera_movement": s.get("camera_movement")
+            })
+
+        merge_prompt = f"""你是一位专业的影视剪辑师。请分析以下分镜列表，判断哪些**连续的**分镜应该合并。
+
+合并条件（必须同时满足）：
+1. 分镜是**连续的**（index 相邻）
+2. 场景/背景没有显著变化
+3. 主体/角色没有切换
+4. 机位角度没有明显变化
+5. 属于同一个完整动作或事件
+
+分镜列表：
+{json.dumps(shots_summary, ensure_ascii=False, indent=2)}
+
+请输出需要合并的分镜组，格式为纯JSON数组，每个元素是一个需要合并的index数组。
+例如：[[0,1,2], [5,6]] 表示将0-1-2合并为一个分镜，5-6合并为一个分镜。
+如果没有需要合并的，输出空数组 []。
+仅输出纯JSON，不要任何解释。"""
+
+        try:
+            merge_response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[merge_prompt],
+            )
+            merge_text = merge_response.text.strip()
+
+            # 提取JSON数组
+            if merge_text.startswith("["):
+                merge_groups = json.loads(merge_text)
+            else:
+                l = merge_text.find("[")
+                r = merge_text.rfind("]")
+                if l != -1 and r != -1:
+                    merge_groups = json.loads(merge_text[l:r+1])
+                else:
+                    merge_groups = []
+
+            if not merge_groups:
+                print(f"📊 语义分析：无需合并，保留 {len(shots)} 个分镜")
+                return shots
+
+            # 执行合并
+            merged_indices = set()
+            for group in merge_groups:
+                if isinstance(group, list) and len(group) > 1:
+                    merged_indices.update(group[1:])  # 除了第一个，其余标记为被合并
+
+            result = []
+            i = 0
+            new_shot_num = 1
+            while i < len(shots):
+                shot = shots[i].copy()
+
+                # 检查是否是合并组的起始
+                merge_group = None
+                for group in merge_groups:
+                    if isinstance(group, list) and len(group) > 1 and group[0] == i:
+                        merge_group = group
+                        break
+
+                if merge_group:
+                    # 合并该组的所有分镜
+                    last_idx = merge_group[-1]
+                    shot["end_time"] = shots[last_idx].get("end_time")
+
+                    # 合并描述
+                    descriptions = []
+                    for idx in merge_group:
+                        if idx < len(shots):
+                            desc = shots[idx].get("frame_description") or shots[idx].get("content_analysis")
+                            if desc and desc not in descriptions:
+                                descriptions.append(desc)
+                    shot["frame_description"] = " → ".join(descriptions[:3])  # 最多保留3段描述
+                    shot["content_analysis"] = shot["frame_description"]
+
+                    print(f"🔗 合并分镜 {[s+1 for s in merge_group]} -> shot_{new_shot_num:02d}")
+                    i = last_idx + 1
+                else:
+                    if i not in merged_indices:
+                        i += 1
+                    else:
+                        i += 1
+                        continue
+
+                shot["shot_number"] = new_shot_num
+                result.append(shot)
+                new_shot_num += 1
+
+            print(f"📊 语义合并完成：{len(shots)} 个分镜 -> {len(result)} 个分镜")
+            return result
+
+        except Exception as e:
+            print(f"⚠️ 语义合并分析失败 ({e})，保留原始分镜")
+            return shots
 
     def _run_ffmpeg_extraction(self, video_path: Path, storyboard: List):
-        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+        """
+        毫秒级精准提取：
+        - 关键帧提取：从分镜中点提取，确保画面与描述一致
+        - 视频片段：使用精准切割模式
+        """
+        ffmpeg_path = get_ffmpeg_path()
         for s in storyboard:
             ts = to_seconds(s.get("start_time"))
-            duration = to_seconds(s.get("end_time")) - ts
+            end_ts = to_seconds(s.get("end_time"))
+            duration = end_ts - ts
             sid = f"shot_{int(s['shot_number']):02d}"
+
+            # 🎯 关键帧提取：从分镜的**中点**提取，而非起始点
+            # 原因：起始点可能是转场瞬间，中点才是该分镜的代表性画面
+            mid_ts = ts + (duration / 2.0)
             img_out = self.job_dir / "frames" / f"{sid}.png"
-            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-i", str(video_path), "-frames:v", "1", "-q:v", "2", str(img_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-i", str(video_path),
+                "-ss", str(mid_ts),       # 从中点提取，确保画面与描述一致
+                "-frames:v", "1",
+                "-q:v", "2",
+                str(img_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # 🎯 精准视频片段切割
             video_segment_out = self.job_dir / "source_segments" / f"{sid}.mp4"
-            subprocess.run([ffmpeg_path, "-y", "-ss", str(ts), "-t", str(duration), "-i", str(video_path), "-c", "copy", str(video_segment_out)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run([
+                ffmpeg_path, "-y",
+                "-i", str(video_path),
+                "-ss", str(ts),           # 视频片段从起始点开始
+                "-t", str(duration),
+                "-c:v", "libx264",        # 重新编码以确保精准切割
+                "-c:a", "aac",
+                "-avoid_negative_ts", "make_zero",
+                str(video_segment_out)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def load(self):
         """加载状态并对齐物理文件状态"""
@@ -1763,11 +1989,11 @@ class WorkflowManager:
         }
         
         if failed_count > 0:
-            self.workflow["merge_info"]["message"] = f"⚠️ 有 {failed_count} 个分镜失败，无法拼合"
+            self.workflow["merge_info"]["message"] = f"⚠️ {failed_count} shots failed and cannot be assembled."
         elif pending_count > 0:
-            self.workflow["merge_info"]["message"] = "⏳ 正在等待分镜生成完成..."
+            self.workflow["merge_info"]["message"] = "⏳ Waiting for the shot list to be generated..."
         elif len(shots) > 0:
-            self.workflow["merge_info"]["message"] = "✅ 分镜已全部就绪，可以拼合成片"
+            self.workflow["merge_info"]["message"] = "✅ All shots are ready and can be assembled into the final film."
         
         if updated: self.save()
         return self.workflow
@@ -1802,8 +2028,53 @@ class WorkflowManager:
                 new_subject = act.get("new_subject", "").lower()
                 if old_subject and new_subject:
                     for s in self.workflow.get("shots", []):
+                        # 🏞️ Intelligent Scene Detection: Skip scenery/landscape shots
+                        if self._is_scenery_shot(s["description"]):
+                            print(f"🏞️ Scenery shot skipped (no character injection): {s['shot_id']}")
+                            continue
+
                         if old_subject in s["description"].lower():
-                            s["description"] = re.sub(old_subject, new_subject, s["description"], flags=re.IGNORECASE)
+                            desc = s["description"]
+
+                            # 🧹 STEP 1: STRICT ATTRIBUTE PURGING for gender conflicts
+                            # For simple swaps, purge gender-conflicting attributes
+                            purged_desc = self._purge_conflicting_attributes(desc, old_subject, {})
+                            print(f"🧹 Purged conflicting attributes from {s['shot_id']}")
+
+                            # 🔍 STEP 2: Separate narrative layer from technical tags
+                            tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+                            tags = re.findall(tag_pattern, purged_desc)
+                            narrative_part = re.sub(tag_pattern, '', purged_desc).strip()
+
+                            # 🔄 STEP 3: Replace SUBJECT_PLACEHOLDER with new subject
+                            if 'SUBJECT_PLACEHOLDER' in narrative_part:
+                                # Replace ONLY the first placeholder with the subject
+                                new_narrative = narrative_part.replace('SUBJECT_PLACEHOLDER', new_subject, 1)
+                                # Replace remaining placeholders with "the [subject]"
+                                new_narrative = new_narrative.replace('SUBJECT_PLACEHOLDER', f'the {new_subject}')
+                            else:
+                                # Fallback: direct replacement
+                                new_narrative = re.sub(
+                                    rf'\b{re.escape(old_subject)}\b',
+                                    new_subject,
+                                    narrative_part,
+                                    flags=re.IGNORECASE
+                                )
+
+                            # 🧹 STEP 4: Semantic Sanitization for pronouns
+                            new_narrative = self._semantic_sanitize_gender(new_narrative, old_subject, new_subject)
+
+                            # 🧹 STEP 5: Clean up duplicates and grammar
+                            new_narrative = re.sub(r',\s*,', ',', new_narrative)
+                            new_narrative = re.sub(r'\s{2,}', ' ', new_narrative)
+                            new_narrative = new_narrative.strip()
+                            if new_narrative:
+                                new_narrative = new_narrative[0].upper() + new_narrative[1:]
+
+                            # Reconstruct description: narrative + preserved tags
+                            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+                            s["description"] = new_narrative + ("\n" + "\n".join(tag_lines) if tag_lines else "")
+
                             s["status"]["stylize"] = "NOT_STARTED"
                             s["status"]["video_generate"] = "NOT_STARTED"
                             v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
@@ -1813,6 +2084,131 @@ class WorkflowManager:
                             s["assets"]["video"] = None
                             s["assets"]["stylized_frame"] = None
                             total_affected += 1
+                            print(f"🧹 Clean swap applied: {s['shot_id']}")
+
+            elif op == "detailed_subject_swap":
+                # 🎨 Fine-Grained Attribute Propagation: Detailed character replacement with visual attributes
+                # 🆔 Global Identity Anchor: Store and propagate consistent character identity
+                old_subject = act.get("old_subject", "").lower()
+                new_subject = act.get("new_subject", "").lower()
+                attributes = act.get("attributes", {})
+
+                if old_subject and new_subject:
+                    # Build the detailed character description from attributes
+                    attr_parts = []
+
+                    # Order attributes for natural reading: age, body, hair, eyes, skin, clothing, accessories, other
+                    if attributes.get("age_descriptor"):
+                        attr_parts.append(attributes["age_descriptor"])
+                    if attributes.get("body_type"):
+                        attr_parts.append(attributes["body_type"])
+
+                    # Hair description (combine style and color)
+                    hair_parts = []
+                    if attributes.get("hair_color"):
+                        hair_parts.append(attributes["hair_color"])
+                    if attributes.get("hair_style"):
+                        hair_parts.append(attributes["hair_style"])
+                    if hair_parts:
+                        attr_parts.append(" ".join(hair_parts) + " hair")
+
+                    if attributes.get("eye_color"):
+                        attr_parts.append(f"{attributes['eye_color']} eyes")
+                    if attributes.get("skin_tone"):
+                        attr_parts.append(f"{attributes['skin_tone']} skin")
+                    if attributes.get("facial_features"):
+                        attr_parts.append(f"with {attributes['facial_features']}")
+                    if attributes.get("clothing"):
+                        attr_parts.append(f"wearing {attributes['clothing']}")
+                    if attributes.get("accessories"):
+                        attr_parts.append(f"with {attributes['accessories']}")
+                    if attributes.get("other_visual"):
+                        attr_parts.append(attributes["other_visual"])
+
+                    # Construct full character description
+                    if attr_parts:
+                        # Format: "a [attributes] [subject]" e.g., "a young golden short hair woman wearing red attire"
+                        full_character_desc = f"a {' '.join(attr_parts)} {new_subject}"
+                    else:
+                        full_character_desc = new_subject
+
+                    # 🆔 Store Global Identity Anchor in workflow for consistency tracking
+                    self.workflow.setdefault("global", {})["identity_anchor"] = {
+                        "base_subject": new_subject,
+                        "full_description": full_character_desc,
+                        "attributes": attributes,
+                        "replaced_from": old_subject
+                    }
+                    print(f"🆔 Global Identity Anchor set: '{full_character_desc}'")
+
+                    shots_modified = 0
+                    shots_skipped = 0
+
+                    for s in self.workflow.get("shots", []):
+                        # 🏞️ Intelligent Scene Detection: Skip scenery/landscape shots
+                        if self._is_scenery_shot(s["description"]):
+                            print(f"🏞️ Scenery shot preserved (identity not injected): {s['shot_id']}")
+                            shots_skipped += 1
+                            continue
+
+                        if old_subject in s["description"].lower():
+                            desc = s["description"]
+
+                            # 🧹 STEP 1: STRICT ATTRIBUTE PURGING
+                            # Completely remove ALL conflicting descriptors before applying new Visual DNA
+                            purged_desc = self._purge_conflicting_attributes(desc, old_subject, attributes)
+                            print(f"🧹 Purged conflicting attributes from {s['shot_id']}")
+
+                            # 🔍 STEP 2: Separate narrative layer from technical tags (tags preserved by purge)
+                            tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+                            tags = re.findall(tag_pattern, purged_desc)
+                            narrative_part = re.sub(tag_pattern, '', purged_desc).strip()
+
+                            # 🆔 STEP 3: Replace SUBJECT_PLACEHOLDER with new identity
+                            # The purge method leaves SUBJECT_PLACEHOLDER where the old subject was
+                            if 'SUBJECT_PLACEHOLDER' in narrative_part:
+                                # Replace ONLY the first placeholder with full description
+                                new_narrative = narrative_part.replace('SUBJECT_PLACEHOLDER', full_character_desc, 1)
+                                # Replace remaining placeholders with simple pronoun or "the [subject]"
+                                new_narrative = new_narrative.replace('SUBJECT_PLACEHOLDER', f'the {new_subject}')
+                            else:
+                                # Fallback: append identity if placeholder not found
+                                new_narrative = f"{full_character_desc}, {narrative_part}" if narrative_part else full_character_desc
+
+                            # 🧹 STEP 4: Semantic Sanitization for pronouns
+                            new_narrative = self._semantic_sanitize_gender(new_narrative, old_subject, new_subject)
+
+                            # 🧹 STEP 5: Clean up duplicates and grammar
+                            # Remove duplicate "a [subject]" patterns that may have been created
+                            new_narrative = re.sub(rf'\b(a\s+{re.escape(new_subject)})\s*,\s*a\s+{re.escape(new_subject)}\b', r'\1', new_narrative, flags=re.IGNORECASE)
+                            # Remove duplicate consecutive words
+                            new_narrative = re.sub(r'\b(\w+)\s+\1\b', r'\1', new_narrative, flags=re.IGNORECASE)
+                            # Clean up multiple commas/spaces
+                            new_narrative = re.sub(r',\s*,', ',', new_narrative)
+                            new_narrative = re.sub(r'\s{2,}', ' ', new_narrative)
+                            # Capitalize first letter of sentence
+                            new_narrative = new_narrative.strip()
+                            if new_narrative:
+                                new_narrative = new_narrative[0].upper() + new_narrative[1:]
+
+                            # Reconstruct description: narrative + preserved tags
+                            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+                            s["description"] = new_narrative + ("\n" + "\n".join(tag_lines) if tag_lines else "")
+
+                            # Reset generation status
+                            s["status"]["stylize"] = "NOT_STARTED"
+                            s["status"]["video_generate"] = "NOT_STARTED"
+                            v_path = self.job_dir / "videos" / f"{s['shot_id']}.mp4"
+                            if v_path.exists(): os.remove(v_path)
+                            i_path = self.job_dir / "stylized_frames" / f"{s['shot_id']}.png"
+                            if i_path.exists(): os.remove(i_path)
+                            s["assets"]["video"] = None
+                            s["assets"]["stylized_frame"] = None
+                            shots_modified += 1
+                            print(f"🆔 Clean identity applied: {s['shot_id']}")
+
+                    total_affected += shots_modified
+                    print(f"🎨 Identity Anchoring complete: {shots_modified} protagonist shots updated, {shots_skipped} scenery shots preserved")
                             
             elif op == "update_shot_params":
                 sid = act.get("shot_id")
@@ -1829,7 +2225,78 @@ class WorkflowManager:
                         s["assets"]["stylized_frame"] = None
                         total_affected += 1
                         break
-                        
+
+            elif op == "enhance_shot_description":
+                # 📐 空间感知 + 🎬 风格强化：增强分镜描述
+                sid = act.get("shot_id")
+                spatial_info = act.get("spatial_info", "")
+                style_boost = act.get("style_boost", "")
+                for s in self.workflow.get("shots", []):
+                    if s["shot_id"] == sid:
+                        original_desc = s.get("description", "")
+                        enhanced_parts = [original_desc]
+                        if spatial_info:
+                            enhanced_parts.append(f"[Spatial: {spatial_info}]")
+                        if style_boost:
+                            enhanced_parts.append(f"[Style: {style_boost}]")
+                        s["description"] = " ".join(enhanced_parts)
+                        s["status"]["stylize"] = "NOT_STARTED"
+                        s["status"]["video_generate"] = "NOT_STARTED"
+                        v_path = self.job_dir / "videos" / f"{sid}.mp4"
+                        if v_path.exists(): os.remove(v_path)
+                        i_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+                        if i_path.exists(): os.remove(i_path)
+                        s["assets"]["video"] = None
+                        s["assets"]["stylized_frame"] = None
+                        total_affected += 1
+                        print(f"📐 增强分镜描述: {sid} -> {s['description'][:80]}...")
+                        break
+
+            elif op == "update_cinematography":
+                # 🎬 摄影参数修改（仅当用户明确要求时）
+                sid = act.get("shot_id")
+                param = act.get("param", "")
+                new_value = act.get("value", "")
+                valid_params = ["shot_scale", "subject_frame_position", "subject_orientation", "gaze_direction", "motion_vector"]
+                if param in valid_params and new_value:
+                    for s in self.workflow.get("shots", []):
+                        if s["shot_id"] == sid:
+                            # Update the cinematography dict
+                            s.setdefault("cinematography", {})[param] = new_value
+
+                            # Update the description tags to match
+                            tag_map = {
+                                "shot_scale": "SCALE",
+                                "subject_frame_position": "POSITION",
+                                "subject_orientation": "ORIENTATION",
+                                "gaze_direction": "GAZE",
+                                "motion_vector": "MOTION"
+                            }
+                            tag_name = tag_map.get(param, param.upper())
+                            desc = s.get("description", "")
+
+                            # Replace existing tag or append new one
+                            tag_pattern = rf'\[{tag_name}: [^\]]+\]'
+                            new_tag = f"[{tag_name}: {new_value}]"
+                            if re.search(tag_pattern, desc):
+                                desc = re.sub(tag_pattern, new_tag, desc)
+                            else:
+                                desc = desc + f"\n{new_tag}"
+                            s["description"] = desc
+
+                            # Reset generation status
+                            s["status"]["stylize"] = "NOT_STARTED"
+                            s["status"]["video_generate"] = "NOT_STARTED"
+                            v_path = self.job_dir / "videos" / f"{sid}.mp4"
+                            if v_path.exists(): os.remove(v_path)
+                            i_path = self.job_dir / "stylized_frames" / f"{sid}.png"
+                            if i_path.exists(): os.remove(i_path)
+                            s["assets"]["video"] = None
+                            s["assets"]["stylized_frame"] = None
+                            total_affected += 1
+                            print(f"🎬 摄影参数更新: {sid} [{param}] -> {new_value}")
+                            break
+
         if total_affected > 0: self.save()
         return {"status": "success", "affected_shots": total_affected}
 
@@ -1874,6 +2341,372 @@ class WorkflowManager:
         
         self.load() 
 
+    def _is_scenery_shot(self, description: str) -> bool:
+        """
+        🏞️ Intelligent Scene Detection: Determine if a shot is a scenery/landscape shot with no human protagonist.
+        Returns True if the shot should be SKIPPED during character replacement.
+        """
+        desc_lower = description.lower()
+
+        # Human subject indicators - if ANY of these are present, it's NOT a scenery shot
+        human_indicators = [
+            # Generic human terms
+            'man', 'woman', 'person', 'people', 'human', 'figure', 'silhouette',
+            'boy', 'girl', 'child', 'kid', 'baby', 'infant', 'toddler',
+            'teenager', 'adult', 'elder', 'elderly', 'senior',
+            # Relationship terms
+            'father', 'mother', 'dad', 'mom', 'parent', 'son', 'daughter',
+            'brother', 'sister', 'husband', 'wife', 'couple',
+            'friend', 'stranger', 'visitor', 'guest',
+            # Professional/role terms
+            'worker', 'employee', 'boss', 'doctor', 'nurse', 'teacher', 'student',
+            'driver', 'passenger', 'pedestrian', 'commuter',
+            'actor', 'actress', 'performer', 'singer', 'dancer',
+            'protagonist', 'character', 'hero', 'heroine',
+            # Body parts (indicating human presence)
+            'face', 'hand', 'hands', 'arm', 'arms', 'leg', 'legs',
+            'head', 'body', 'shoulder', 'back', 'chest',
+            'eye', 'eyes', 'hair', 'lips', 'mouth', 'nose',
+            # Actions that imply human
+            'walking', 'running', 'sitting', 'standing', 'talking', 'speaking',
+            'looking', 'watching', 'holding', 'carrying', 'wearing',
+            # Pronouns
+            'he ', 'she ', 'his ', 'her ', 'him ', 'they ', 'their ',
+        ]
+
+        # Check for human presence
+        has_human = any(indicator in desc_lower for indicator in human_indicators)
+
+        if has_human:
+            return False  # Not a scenery shot - has human protagonist
+
+        # Scenery/landscape indicators - if these dominate without humans, it's scenery
+        scenery_indicators = [
+            # Nature scenes
+            'landscape', 'scenery', 'vista', 'panorama', 'horizon',
+            'mountain', 'valley', 'forest', 'woods', 'jungle', 'desert',
+            'ocean', 'sea', 'lake', 'river', 'waterfall', 'beach', 'coast',
+            'sky', 'clouds', 'sunset', 'sunrise', 'dawn', 'dusk', 'night sky',
+            'field', 'meadow', 'prairie', 'grassland', 'garden', 'park',
+            # Urban scenes without people
+            'cityscape', 'skyline', 'building', 'architecture', 'street view',
+            'empty room', 'interior', 'exterior', 'establishing shot',
+            'aerial view', 'drone shot', 'bird\'s eye',
+            # Object focus
+            'close-up of object', 'food', 'vehicle', 'car ', 'train ', 'plane ',
+            'furniture', 'decoration', 'artifact',
+            # Transition/ambient
+            'transition', 'time lapse', 'ambient', 'atmosphere', 'mood shot',
+        ]
+
+        # Check for scenery dominance
+        has_scenery = any(indicator in desc_lower for indicator in scenery_indicators)
+
+        return has_scenery  # Is scenery if indicators present and no humans
+
+    def _semantic_sanitize_gender(self, description: str, old_subject: str, new_subject: str) -> str:
+        """
+        🧹 Semantic Sanitization: Clean gender-conflicting attributes when swapping subjects.
+        - Strips incompatible physical attributes (beard, mustache, Adam's apple, etc.)
+        - Remaps gendered pronouns (he/him/his → she/her/hers and vice versa)
+        """
+        # Define gender categories - expanded to catch variations
+        male_keywords = {'man', 'men', 'boy', 'boys', 'male', 'males', 'gentleman', 'gentlemen',
+                        'guy', 'guys', 'father', 'dad', 'husband', 'brother', 'son', 'uncle',
+                        'grandfather', 'protagonist', 'protagonists', 'hero', 'heroes', 'actor'}
+        female_keywords = {'woman', 'women', 'girl', 'girls', 'female', 'females', 'lady', 'ladies',
+                         'mother', 'mom', 'wife', 'sister', 'daughter', 'aunt', 'grandmother',
+                         'heroine', 'heroines', 'actress'}
+
+        # Check if any male/female keyword appears in the subject string
+        old_lower = old_subject.lower()
+        new_lower = new_subject.lower()
+
+        old_is_male = any(kw in old_lower for kw in male_keywords)
+        old_is_female = any(kw in old_lower for kw in female_keywords)
+        new_is_male = any(kw in new_lower for kw in male_keywords)
+        new_is_female = any(kw in new_lower for kw in female_keywords)
+
+        # Only sanitize if there's a gender change
+        if (old_is_male and new_is_female) or (old_is_female and new_is_male):
+            if old_is_male and new_is_female:
+                # Male → Female: Remove male-specific attributes
+                male_attributes = [
+                    # Mustache - ALL variations (most comprehensive)
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*mustache\b',  # "with a thick mustache", "with a handlebar mustache"
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*moustache\b', # British spelling
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*mustache\b',   # "has a mustache"
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+                    r'\bhaving\s+(?:a\s+)?(?:\w+\s+)*mustache\b', # "having a mustache"
+                    r'\bsporting\s+(?:a\s+)?(?:\w+\s+)*mustache\b', # "sporting a mustache"
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*mustache\b',  # "his thick mustache", "the mustache"
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*moustache\b',
+                    r'\b\w+\s+mustache\b',  # "thick mustache", "handlebar mustache"
+                    r'\b\w+\s+moustache\b',
+                    r'\bmustached\b', r'\bmoustached\b',
+                    r'\bmustache\b', r'\bmoustache\b',  # standalone as last resort
+                    # Beard - ALL variations
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+                    r'\bhas\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*beard\b',
+                    r'\b\w+\s+beard\b',  # "thick beard", "full beard"
+                    r'\bbearded\b', r'\bbeard\b',
+                    # Goatee
+                    r'\bwith\s+(?:a\s+)?(?:\w+\s+)*goatee\b',
+                    r'\b(?:his|the|a)\s+(?:\w+\s+)*goatee\b',
+                    r'\bgoatee\b',
+                    # Stubble
+                    r'\bwith\s+(?:\w+\s+)*stubble\b',
+                    r'\b\w+\s+stubble\b',  # "five o'clock stubble"
+                    r'\bstubbled\b', r'\bstubble\b',
+                    # Facial hair general
+                    r'\bfacial\s+hair\b', r'\bwith\s+facial\s+hair\b',
+                    # Other male-specific
+                    r'\bAdam\'s\s+apple\b',
+                    r'\bbald\b', r'\bbalding\b',
+                    r'\bmuscular\b', r'\bbuff\b',
+                    r'\bbroad[- ]shouldered\b',
+                    r'\bchest\s+hair\b', r'\bwith\s+chest\s+hair\b',
+                ]
+                for attr in male_attributes:
+                    description = re.sub(attr, '', description, flags=re.IGNORECASE)
+
+                # Remap pronouns: he/him/his → she/her/hers
+                description = re.sub(r'\bhe\b', 'she', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhim\b', 'her', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhis\b', 'her', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bhimself\b', 'herself', description, flags=re.IGNORECASE)
+
+            elif old_is_female and new_is_male:
+                # Female → Male: Remove female-specific attributes
+                female_attributes = [
+                    r'\b(lipstick)\b', r'\b(makeup|make-up)\b', r'\b(long eyelashes)\b',
+                    r'\b(feminine)\b', r'\b(pregnant)\b', r'\b(nursing)\b',
+                    r'\b(wearing a dress)\b', r'\b(in a skirt)\b'
+                ]
+                for attr in female_attributes:
+                    description = re.sub(attr, '', description, flags=re.IGNORECASE)
+
+                # Remap pronouns: she/her/hers → he/him/his
+                description = re.sub(r'\bshe\b', 'he', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bher\b(?!\s+\w+ing)', 'him', description, flags=re.IGNORECASE)  # Avoid "her walking"
+                description = re.sub(r'\bhers\b', 'his', description, flags=re.IGNORECASE)
+                description = re.sub(r'\bherself\b', 'himself', description, flags=re.IGNORECASE)
+
+            # Clean up any double spaces left from attribute removal
+            description = re.sub(r'\s{2,}', ' ', description).strip()
+
+        return description
+
+    def _purge_conflicting_attributes(self, description: str, old_subject: str, new_attributes: Dict) -> str:
+        """
+        🧹 Strict Attribute Purging: Completely remove ALL conflicting descriptors before applying new Visual DNA.
+        This ensures a CLEAN transformation with zero residues from the original subject.
+
+        Purge Categories:
+        1. Old subject name and variants
+        2. Hair descriptions (color, style, length)
+        3. Clothing descriptions
+        4. Physical features and accessories
+        5. Age descriptors
+        6. Body type descriptors
+        """
+        # 🔍 Separate technical tags from narrative (preserve tags)
+        tag_pattern = r'\[([A-Z]+): ([^\]]+)\]'
+        tags = re.findall(tag_pattern, description)
+        narrative = re.sub(tag_pattern, '', description).strip()
+
+        # ============================================
+        # 1️⃣ PURGE OLD SUBJECT NAME AND VARIANTS
+        # ============================================
+        old_lower = old_subject.lower()
+        subject_variants = {
+            'man': ['man', 'men', 'male', 'gentleman', 'guy', 'fellow', 'dude'],
+            'woman': ['woman', 'women', 'female', 'lady', 'girl'],
+            'boy': ['boy', 'boys', 'lad', 'young man', 'male child'],
+            'girl': ['girl', 'girls', 'lass', 'young woman', 'female child'],
+            'child': ['child', 'children', 'kid', 'kids', 'youngster'],
+            'person': ['person', 'people', 'individual', 'figure'],
+        }
+
+        # Find which category the old subject belongs to
+        variants_to_remove = [old_subject]
+        for category, variants in subject_variants.items():
+            if old_lower in variants or old_lower == category:
+                variants_to_remove.extend(variants)
+                break
+
+        # Remove old subject and its variants (but keep the position for replacement)
+        for variant in set(variants_to_remove):
+            # Use word boundary to avoid partial matches
+            narrative = re.sub(rf'\ba\s+{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\bthe\s+{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{re.escape(variant)}\b', 'SUBJECT_PLACEHOLDER', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 2️⃣ PURGE ALL HAIR DESCRIPTIONS
+        # ============================================
+        hair_colors = [
+            'black', 'brown', 'blonde', 'blond', 'golden', 'silver', 'gray', 'grey',
+            'white', 'red', 'auburn', 'ginger', 'brunette', 'chestnut', 'platinum',
+            'dark', 'light', 'dirty blonde', 'strawberry blonde', 'jet black',
+            'salt and pepper', 'highlighted', 'dyed', 'colored'
+        ]
+        hair_styles = [
+            'short', 'long', 'medium', 'curly', 'straight', 'wavy', 'frizzy',
+            'bald', 'balding', 'shaved', 'buzz cut', 'crew cut', 'mohawk',
+            'ponytail', 'bun', 'braided', 'braids', 'dreadlocks', 'dreads',
+            'afro', 'pixie', 'bob', 'shoulder-length', 'flowing', 'slicked back',
+            'messy', 'neat', 'tousled', 'spiky', 'receding', 'thinning',
+            'thick', 'fine', 'wispy', 'layered'
+        ]
+
+        # Remove hair color + "hair" combinations
+        for color in hair_colors:
+            narrative = re.sub(rf'\b{color}\s+hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{color}-hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+
+        # Remove hair style + "hair" combinations
+        for style in hair_styles:
+            narrative = re.sub(rf'\b{style}\s+hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{style}-hair(ed)?\b', '', narrative, flags=re.IGNORECASE)
+
+        # Remove complex hair descriptions
+        narrative = re.sub(r'\bwith\s+[\w\s]+\s+hair\b', '', narrative, flags=re.IGNORECASE)
+        narrative = re.sub(r'\b[\w\s]+\s+haired\b', '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 3️⃣ PURGE ALL CLOTHING DESCRIPTIONS
+        # ============================================
+        clothing_patterns = [
+            r'\bwearing\s+[\w\s,]+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|tee|top|shorts|trousers|uniform|outfit|attire|clothes|clothing|garment)\b',
+            r'\bin\s+(?:a\s+)?[\w\s]+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|tee|top|shorts|trousers|uniform|outfit|attire)\b',
+            r'\bdressed\s+in\s+[\w\s,]+\b',
+            r'\bclad\s+in\s+[\w\s,]+\b',
+            # Specific clothing items with colors
+            r'\b(?:red|blue|black|white|green|yellow|pink|purple|orange|brown|gray|grey)\s+(?:shirt|dress|suit|jacket|coat|pants|jeans|skirt|blouse|sweater|hoodie|t-shirt|top)\b',
+        ]
+        for pattern in clothing_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 4️⃣ PURGE PHYSICAL FEATURES & ACCESSORIES
+        # ============================================
+        # Facial features - comprehensive patterns for mustache/beard/goatee
+        facial_features = [
+            # Mustache - ALL variations
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*moustache\b',
+            r'\bhaving\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\bsporting\s+(?:a\s+)?(?:\w+\s+)*mustache\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*mustache\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*moustache\b',
+            r'\b\w+\s+mustache\b',
+            r'\b\w+\s+moustache\b',
+            r'\bmustached\b', r'\bmoustached\b',
+            r'\bmustache\b', r'\bmoustache\b',
+            # Beard - ALL variations
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+            r'\bhas\s+(?:a\s+)?(?:\w+\s+)*beard\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*beard\b',
+            r'\b\w+\s+beard\b',
+            r'\bbearded\b', r'\bbeard\b',
+            # Goatee
+            r'\bwith\s+(?:a\s+)?(?:\w+\s+)*goatee\b',
+            r'\b(?:his|the|a)\s+(?:\w+\s+)*goatee\b',
+            r'\bgoatee\b',
+            r'\bwith\s+stubble\b', r'\bstubbled\b',
+            r'\bwith\s+freckles\b', r'\bfreckled\b',
+            r'\bwith\s+(?:a\s+)?scar\b', r'\bscarred\b',
+            r'\bwith\s+dimples\b',
+            r'\bwith\s+wrinkles\b', r'\bwrinkled\b',
+            r'\bwith\s+(?:a\s+)?tattoo\b', r'\btattooed\b',
+        ]
+        for pattern in facial_features:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # Eye descriptions
+        eye_colors = ['blue', 'green', 'brown', 'hazel', 'gray', 'grey', 'black', 'amber', 'violet']
+        for color in eye_colors:
+            narrative = re.sub(rf'\b{color}\s+eyes?\b', '', narrative, flags=re.IGNORECASE)
+            narrative = re.sub(rf'\b{color}-eyed\b', '', narrative, flags=re.IGNORECASE)
+        narrative = re.sub(r'\bwith\s+[\w\s]+\s+eyes\b', '', narrative, flags=re.IGNORECASE)
+
+        # Accessories
+        accessories = [
+            r'\bwearing\s+(?:a\s+)?(?:glasses|sunglasses|spectacles)\b',
+            r'\bwith\s+(?:a\s+)?(?:glasses|sunglasses|spectacles)\b',
+            r'\bwearing\s+(?:a\s+)?(?:hat|cap|beanie|helmet)\b',
+            r'\bwith\s+(?:a\s+)?(?:hat|cap|beanie|helmet)\b',
+            r'\bwearing\s+(?:a\s+)?(?:necklace|earrings|bracelet|watch|ring)\b',
+            r'\bwith\s+(?:a\s+)?(?:necklace|earrings|bracelet|watch|ring)\b',
+            r'\bwearing\s+(?:a\s+)?(?:scarf|tie|bowtie|bow tie)\b',
+            r'\bwith\s+(?:a\s+)?(?:scarf|tie|bowtie|bow tie)\b',
+        ]
+        for pattern in accessories:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 5️⃣ PURGE AGE DESCRIPTORS
+        # ============================================
+        age_patterns = [
+            r'\byoung\b', r'\bold\b', r'\belderly\b', r'\bmiddle-aged\b', r'\bmiddle aged\b',
+            r'\bteenage\b', r'\bteen\b', r'\badult\b', r'\bsenior\b', r'\bjuvenile\b',
+            r'\bin (?:his|her|their) (?:20s|30s|40s|50s|60s|70s|80s|90s|twenties|thirties|forties|fifties|sixties|seventies|eighties|nineties)\b',
+        ]
+        for pattern in age_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 6️⃣ PURGE BODY TYPE DESCRIPTORS
+        # ============================================
+        body_patterns = [
+            r'\b(?:tall|short|slim|slender|thin|skinny|fat|heavy|overweight|muscular|athletic|petite|stocky|lanky|burly|chubby|plump)\b',
+            r'\bwell-built\b', r'\bwell built\b',
+            r'\bbroad[- ]shouldered\b',
+        ]
+        for pattern in body_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # 7️⃣ PURGE SKIN TONE DESCRIPTORS
+        # ============================================
+        skin_patterns = [
+            r'\bfair[- ]skinned\b', r'\bfair skin\b',
+            r'\bdark[- ]skinned\b', r'\bdark skin\b',
+            r'\bpale[- ]skinned\b', r'\bpale skin\b',
+            r'\btan[- ]skinned\b', r'\btanned skin\b', r'\btanned\b',
+            r'\bolive[- ]skinned\b', r'\bolive skin\b',
+        ]
+        for pattern in skin_patterns:
+            narrative = re.sub(pattern, '', narrative, flags=re.IGNORECASE)
+
+        # ============================================
+        # CLEANUP
+        # ============================================
+        # Remove orphaned articles and prepositions
+        narrative = re.sub(r'\ba\s+,', ',', narrative)
+        narrative = re.sub(r'\bthe\s+,', ',', narrative)
+        narrative = re.sub(r'\bwith\s+,', ',', narrative)
+        narrative = re.sub(r'\bwearing\s+,', ',', narrative)
+        narrative = re.sub(r'\bin\s+,', ',', narrative)
+
+        # Remove multiple spaces and clean up
+        narrative = re.sub(r'\s{2,}', ' ', narrative)
+        narrative = re.sub(r'\s+,', ',', narrative)
+        narrative = re.sub(r',\s*,', ',', narrative)
+        narrative = re.sub(r'^\s*,\s*', '', narrative)
+        narrative = re.sub(r'\s*,\s*$', '', narrative)
+        narrative = narrative.strip()
+
+        # Reconstruct with preserved tags
+        if tags:
+            tag_lines = [f"[{tag}: {value}]" for tag, value in tags]
+            return narrative + "\n" + "\n".join(tag_lines)
+        return narrative
+
     def _get_shot_by_id(self, shot_id: str) -> Optional[Dict]:
         for s in self.workflow.get("shots", []):
             if s.get("shot_id") == shot_id: return s
@@ -1881,7 +2714,7 @@ class WorkflowManager:
 
     def merge_videos(self) -> str:
         """执行无损合并"""
-        ffmpeg_path = "/opt/homebrew/bin/ffmpeg"
+        ffmpeg_path = get_ffmpeg_path()
         success_shots = [s for s in self.workflow.get("shots", []) if s["status"].get("video_generate") == "SUCCESS"]
         if not success_shots: raise RuntimeError("没有可合并的分镜视频。")
         success_shots.sort(key=lambda x: x["shot_id"])
@@ -1937,25 +2770,30 @@ class WorkflowManager:
             const [workflow, setWorkflow] = useState(null);
             const [currentJobId, setCurrentJobId] = useState(null);
             const [viewMode, setViewMode] = useState('grid'); 
-            const [messages, setMessages] = useState([{ role: 'ai', text: '我是您的 AI 指挥官。上传视频后我将开始全自动拆解。' }]);
+            const [messages, setMessages] = useState([{ role: 'ai', text: "Hello, Director. I am your AI Executive Producer ReTake. Please upload a video clip, and I will immediately perform a shot breakdown for you. You can direct me to perform global style reshaping or main character replacement at any time. Let's get started!" }]);
             const [inputText, setInputText] = useState('');
             const [loading, setLoading] = useState(false);
             const [uploading, setUploading] = useState(false);
             const [isAgentVisible, setIsAgentVisible] = useState(true);
             
-            // 💡 状态锁定：正在编辑时禁止轮询更新 UI
             const [isEditing, setIsEditing] = useState(false);
 
-            // 画布缩放和拖拽状态
-            const [transform, setTransform] = useState({ x: 80, y: 50, scale: 0.45 });
+            const [transform, setTransform] = useState({ x: 80, y: 50, scale: 0.35 });
             const isDragging = useRef(false);
             const lastMousePos = useRef({ x: 0, y: 0 });
 
-            // 1. 获取数据
-            const fetchWorkflow = async (jobId) => {
-                // 💡 如果正在编辑，则静默获取但不更新 State，防止覆盖输入内容
-                if (isEditing) return;
+            // 🎯 自动适配视野：切换到 Workflow 视图时自动定位到能看到所有节点的位置
+            const fitToView = () => {
+                const totalShots = workflow?.shots?.length || 1;
+                // 根据分镜数量计算最佳缩放和位置
+                const optimalScale = Math.max(0.15, Math.min(0.4, 1.5 / totalShots));
+                const optimalX = 50;
+                const optimalY = 50;
+                setTransform({ x: optimalX, y: optimalY, scale: optimalScale });
+            };
 
+            const fetchWorkflow = async (jobId) => {
+                if (isEditing) return;
                 try {
                     const targetId = jobId || currentJobId;
                     const url = targetId ? `/api/workflow?job_id=${targetId}` : '/api/workflow';
@@ -1974,15 +2812,12 @@ class WorkflowManager:
                 return () => clearInterval(timer);
             }, [currentJobId, uploading, isEditing]);
 
-            // 2. 画布交互逻辑 (Zoom & Pan)
             const handleWheel = (e) => {
                 if (viewMode !== 'graph') return;
                 const delta = e.deltaY > 0 ? -0.05 : 0.05;
                 setTransform(prev => ({ ...prev, scale: Math.min(Math.max(prev.scale + delta, 0.05), 1.5) }));
             };
-            const handleMouseDown = (e) => {
-                if (viewMode === 'graph') { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; }
-            };
+            const handleMouseDown = (e) => { if (viewMode === 'graph') { isDragging.current = true; lastMousePos.current = { x: e.clientX, y: e.clientY }; } };
             const handleMouseMove = (e) => {
                 if (!isDragging.current || viewMode !== 'graph') return;
                 const dx = e.clientX - lastMousePos.current.x;
@@ -1992,7 +2827,6 @@ class WorkflowManager:
             };
             const handleMouseUp = () => { isDragging.current = false; };
 
-            // 3. 核心功能逻辑
             const handleFileUpload = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -2024,7 +2858,6 @@ class WorkflowManager:
                 fetchWorkflow(currentJobId);
             };
 
-            // 💡 状态同步：实时更新本地内存
             const handleTextChangeLocal = (shotId, newVal) => {
                 setWorkflow(prev => ({
                     ...prev,
@@ -2032,9 +2865,8 @@ class WorkflowManager:
                 }));
             };
 
-            // 💡 状态同步：失去焦点保存并重置分镜状态
             const saveShotUpdate = async (shotId, desc) => {
-                setIsEditing(false); // 解锁轮询
+                setIsEditing(false); 
                 await fetch('/api/shot/update', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -2049,6 +2881,28 @@ class WorkflowManager:
 
             const getAssetUrl = (path) => path ? `/assets/${currentJobId}/${path}` : "";
 
+            // 🎨 Style Header Polish: Strip filler phrases, output clean "STYLE: [Keywords]" format
+            const cleanStylePrompt = (rawStyle) => {
+                if (!rawStyle) return "Cinematic";
+                // Remove common filler phrases
+                const fillerPatterns = [
+                    /^total\s+transformation\s+(into|to)\s+/i,
+                    /^hyper[- ]?stylized\s+(in|as|with)\s+/i,
+                    /^complete\s+(visual\s+)?overhaul\s+(with|into|to)\s+/i,
+                    /^aggressive\s+/i,
+                    /^bold\s+/i,
+                    /\s+style$/i,
+                    /\s+aesthetic$/i,
+                    /,?\s*16:9\s*(cinematic\s*)?(widescreen\s*)?(format)?/i,
+                    /,?\s*maintain\s+aspect\s+ratio/i
+                ];
+                let cleaned = rawStyle;
+                fillerPatterns.forEach(pattern => {
+                    cleaned = cleaned.replace(pattern, '');
+                });
+                return cleaned.trim() || "Cinematic";
+            };
+
             const SHOT_BLOCK_HEIGHT = 650; 
             const totalShots = workflow?.shots?.length || 0;
             const masterSourceY = (totalShots * SHOT_BLOCK_HEIGHT) / 2 - 325;
@@ -2058,7 +2912,7 @@ class WorkflowManager:
                 return (
                     <div className="h-screen flex items-center justify-center p-4 bg-slate-950 text-white">
                         <div className="max-w-xl w-full glass rounded-[3rem] p-12 text-center space-y-8 border-blue-500/20 border-2 shadow-2xl">
-                            <h1 className="text-3xl font-black tracking-tighter uppercase italic">Start ReTake Project</h1>
+                            <h1 className="text-3xl font-black tracking-tighter uppercase italic text-blue-400">Start ReTake Project</h1>
                             <label className="block bg-slate-900 border-2 border-dashed border-slate-700 hover:border-blue-500 p-12 rounded-[2rem] transition-all cursor-pointer">
                                 <span className="text-blue-500 font-black uppercase text-sm tracking-widest">Select Video File</span>
                                 <input type="file" onChange={handleFileUpload} className="hidden" accept="video/*" />
@@ -2071,15 +2925,18 @@ class WorkflowManager:
             if (uploading) return <div className="h-screen flex items-center justify-center bg-slate-950 text-2xl font-black animate-pulse uppercase tracking-tighter text-blue-400">AI Deconstructing...</div>;
 
             return (
-                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden text-white">
+                <div className="h-screen flex flex-col p-4 gap-4 overflow-hidden text-white relative">
                     {/* Header */}
-                    <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5 z-50">
+                    <div className="glass rounded-2xl p-4 flex items-center justify-between border border-white/5 z-40">
                         <div className="flex items-center gap-6">
                             <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent italic uppercase pr-4">ReTake Workstation</h1>
                             <div className="flex bg-slate-900 rounded-xl p-1 border border-white/10 shadow-inner">
-                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD (精修)</button>
-                                <button onClick={() => setViewMode('graph')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW CANVAS</button>
+                                <button onClick={() => setViewMode('grid')} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>STORYBOARD</button>
+                                <button onClick={() => { setViewMode('graph'); setTimeout(fitToView, 100); }} className={`px-5 py-1.5 rounded-lg text-xs font-bold transition ${viewMode === 'graph' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500'}`}>WORKFLOW CANVAS</button>
                             </div>
+                            {viewMode === 'graph' && (
+                                <button onClick={fitToView} className="ml-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 hover:text-white border border-white/10 transition">FIT VIEW</button>
+                            )}
                         </div>
                         <div className="flex gap-4">
                             <button onClick={() => { setWorkflow(null); setCurrentJobId(null); }} className="text-[10px] font-black border border-white/10 px-4 py-2 rounded-xl text-slate-500 hover:text-white uppercase tracking-widest">+ New Project</button>
@@ -2088,9 +2945,10 @@ class WorkflowManager:
                     </div>
 
                     <div className="flex flex-1 gap-4 overflow-hidden relative">
+                        {/* 画布区域 */}
                         <div 
                             className={`flex-1 glass rounded-[3rem] overflow-hidden relative border border-white/10 no-select ${viewMode === 'graph' ? 'canvas-bg' : ''}`}
-                            onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}
+                            onWheel={handleWheel} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={() => isDragging.current = false} onMouseLeave={() => isDragging.current = false}
                         >
                             {viewMode === 'grid' ? (
                                 <div className="h-full overflow-y-auto p-10 custom-scrollbar">
@@ -2101,35 +2959,35 @@ class WorkflowManager:
                                                 <div key={shot.shot_id} className="glass rounded-[2rem] border border-white/5 p-8 bg-slate-950/20 relative shadow-xl">
                                                     <div className="flex justify-between items-center mb-6 px-2">
                                                         <span className="font-mono text-xs text-blue-400 font-bold uppercase tracking-widest">{shot.shot_id}</span>
-                                                        <span className="text-[10px] text-slate-600 font-mono tracking-tighter pr-40 uppercase">Shot Ref: {shot.start_time}s</span>
+                                                        {/* 💡 修正：移除 pr-40，将时间标注靠右对齐 */}
+                                                        <span className="text-[10px] text-slate-500 font-mono uppercase tracking-tighter">REF TIME: {shot.start_time}s</span>
                                                     </div>
                                                     <div className="grid grid-cols-3 gap-6">
                                                         <div className="space-y-3">
                                                             <div className="relative aspect-video rounded-2xl overflow-hidden border border-white/10 bg-black">
                                                                 <img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover" />
-                                                                <div className="absolute top-3 left-3 bg-red-500 text-[8px] px-2 py-0.5 font-black rounded uppercase">SOURCE IMAGE</div>
+                                                                <div className="absolute top-3 left-3 bg-red-500 text-[8px] px-2 py-0.5 font-black rounded uppercase text-white">SOURCE IMAGE</div>
                                                             </div>
                                                             <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest font-bold">SOURCE FRAME</p>
                                                         </div>
                                                         <div className="space-y-3">
                                                             <div className="relative aspect-video rounded-2xl overflow-hidden border border-purple-500/30 bg-slate-900 shadow-[0_0_20px_rgba(168,85,247,0.1)]">
-                                                                {shot.assets.stylized_frame ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic uppercase font-black animate-pulse">DNA Pending</div>}
+                                                                {shot.assets.stylized_frame ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className={`h-full flex items-center justify-center text-[10px] italic uppercase font-black animate-pulse ${shot.status?.stylize === 'RUNNING' ? 'text-purple-400' : 'text-slate-700'}`}>{shot.status?.stylize === 'RUNNING' ? 'RUNNING' : 'NOT STARTED'}</div>}
                                                                 <div className="absolute top-3 left-3 bg-purple-600 text-[8px] px-2 py-0.5 font-black rounded uppercase text-white">STYLIZED DNA</div>
                                                                 <button onClick={() => runTask('stylize', shot.shot_id)} className="absolute bottom-3 right-3 glass p-2 rounded-lg hover:bg-white/10 transition-colors"><svg className="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth="3"/></svg></button>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest font-bold">STYLE FRAME</p>
+                                                            <p className="text-[10px] text-center text-purple-400 uppercase tracking-widest font-bold">Style Frame</p>
                                                         </div>
                                                         <div className="space-y-3">
                                                             <div className={`relative aspect-video rounded-2xl overflow-hidden border ${isSuccess ? 'border-emerald-500/40 shadow-xl' : 'border-blue-500/20 bg-slate-900'}`}>
-                                                                {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex items-center justify-center font-mono text-[9px] text-blue-400 animate-pulse uppercase tracking-widest">{shot.status?.video_generate}</div>}
+                                                                {isSuccess ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className={`h-full flex items-center justify-center text-[10px] italic uppercase font-black animate-pulse ${shot.status?.video_generate === 'RUNNING' ? 'text-blue-400' : 'text-slate-700'}`}>{shot.status?.video_generate === 'RUNNING' ? 'RUNNING' : 'NOT STARTED'}</div>}
                                                                 <div className="absolute top-3 left-3 bg-blue-500 text-[8px] px-2 py-0.5 font-black rounded shadow-lg uppercase text-white">AI OUTPUT</div>
                                                             </div>
-                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest font-bold">FINAL TAKE</p>
+                                                            <p className="text-[10px] text-center text-blue-400 uppercase tracking-widest font-bold">Final Take</p>
                                                         </div>
                                                     </div>
                                                     <div className="mt-8 p-5 bg-slate-900/50 rounded-2xl border border-white/5 relative">
-                                                        <div className="mb-2 text-[9px] text-slate-500 italic uppercase tracking-tighter">Style Context: {workflow.global?.style_prompt}</div>
-                                                        {/* Storyboard 视图下的受控文本框 */}
+                                                        <div className="mb-2 text-[9px] text-slate-500 uppercase tracking-tighter font-bold">STYLE: <span className="text-purple-400 font-mono">{cleanStylePrompt(workflow.global?.style_prompt)}</span></div>
                                                         <textarea 
                                                             className="w-full bg-transparent border-none text-[13px] text-slate-300 outline-none h-20 resize-none italic font-medium leading-relaxed" 
                                                             value={shot.description} 
@@ -2145,7 +3003,6 @@ class WorkflowManager:
                                     </div>
                                 </div>
                             ) : (
-                                /* 💡 [工作流模式] 完整逻辑链路补全版 */
                                 <div className="absolute inset-0 origin-top-left transition-transform duration-75" style={{ transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})` }}>
                                     <svg className="absolute inset-0 w-[10000px] h-[10000px] pointer-events-none z-10">
                                         {workflow.shots?.map((shot, i) => (
@@ -2159,7 +3016,7 @@ class WorkflowManager:
                                     <div className="absolute left-20 w-[410px] glass p-10 rounded-[4rem] border-2 border-red-500/40 shadow-2xl" style={{ top: `${masterSourceY}px` }}>
                                         <div className="absolute -right-3 top-1/2 -translate-y-1/2 w-8 h-8 bg-red-500 rounded-full border-4 border-slate-950 shadow-[0_0_20px_#ef4444]"></div>
                                         <h3 className="text-xs font-black text-red-500 mb-6 uppercase tracking-widest underline decoration-red-900">Root: Master Source Video</h3>
-                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10 shadow-3xl">
+                                        <div className="aspect-video bg-black rounded-[2.5rem] overflow-hidden border border-white/10 shadow-3xl text-white">
                                             <video src={getAssetUrl('input.mp4')} className="w-full h-full object-cover" controls muted loop />
                                         </div>
                                     </div>
@@ -2169,18 +3026,17 @@ class WorkflowManager:
                                             const isImgReady = !!shot.assets.stylized_frame;
                                             const isVidReady = shot.status?.video_generate === 'SUCCESS';
                                             return (
-                                                <div key={shot.shot_id} className="flex items-center gap-12">
+                                                <div key={shot.shot_id} className="flex items-center gap-12 text-white">
                                                     
-                                                    {/* Node: Deconstructed Input */}
                                                     <div className="w-[600px] glass p-10 rounded-[3.5rem] border border-white/10 relative shadow-2xl">
                                                         <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 bg-blue-500 rounded-full border-4 border-slate-950"></div>
-                                                        <div className="text-blue-400 font-black text-[10px] mb-4 uppercase tracking-widest">Logic Layer: Shot Prompt Editor</div>
+                                                        <div className="text-blue-400 font-black text-[10px] mb-4 uppercase tracking-widest text-white">Input Segment #{i+1}</div>
                                                         <div className="flex gap-6">
                                                             <div className="w-48 h-32 rounded-2xl bg-black overflow-hidden border border-white/5 shadow-inner">
                                                                 <img src={getAssetUrl(shot.assets.first_frame)} className="w-full h-full object-cover opacity-80" />
                                                             </div>
                                                             <div className="flex-1">
-                                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60 italic">Prompt Override</span>
+                                                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest opacity-60 italic">Prompt Content</span>
                                                                 <textarea 
                                                                     className="w-full bg-slate-950/50 border border-white/10 rounded-2xl p-4 text-sm text-slate-200 h-32 mt-4 outline-none focus:border-blue-500/40 transition-all font-medium leading-relaxed shadow-inner" 
                                                                     value={shot.description} 
@@ -2194,31 +3050,28 @@ class WorkflowManager:
 
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* Node: Style DNA */}
                                                     <div className="flex flex-col gap-4">
                                                         <div className="w-44 glass p-4 rounded-2xl border border-purple-500/30 flex flex-col items-center">
-                                                            <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Active Style</span>
-                                                            <p className="text-[9px] text-purple-400 font-mono italic truncate w-full text-center">"{workflow.global?.style_prompt}"</p>
+                                                            <span className="text-[7px] text-slate-500 uppercase font-black mb-1">STYLE</span>
+                                                            <p className="text-[9px] text-purple-400 font-mono font-bold truncate w-full text-center">{cleanStylePrompt(workflow.global?.style_prompt)}</p>
                                                         </div>
                                                         <div className="w-44 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center opacity-40">
                                                             <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Image Model</span>
-                                                            <p className="text-[9px] text-slate-300 font-bold uppercase">Imagen 4.0</p>
+                                                            <p className="text-[9px] text-slate-300 font-bold uppercase tracking-widest">Imagen 4.0</p>
                                                         </div>
                                                     </div>
 
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* Node: Stylized Result (DNA) */}
                                                     <div className={`w-[350px] glass p-4 rounded-[2.5rem] border ${isImgReady ? 'border-purple-500/50' : 'border-white/5 opacity-30'}`}>
-                                                        <div className="text-[8px] text-purple-500 font-black uppercase mb-2 tracking-widest text-center">Stylized DNA Output</div>
-                                                        <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-white/10">
-                                                            {isImgReady ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className="h-full flex items-center justify-center text-[10px] text-slate-700 italic uppercase">Not Ready</div>}
+                                                        <div className="text-[8px] text-purple-500 font-black uppercase mb-2 tracking-widest text-center">C. Stylized DNA</div>
+                                                        <div className="aspect-video bg-black rounded-2xl overflow-hidden border border-white/10 relative">
+                                                            {isImgReady ? <img src={getAssetUrl(shot.assets.stylized_frame)} className="w-full h-full object-cover" /> : <div className={`h-full flex items-center justify-center text-[10px] italic uppercase font-black tracking-widest ${shot.status?.stylize === 'RUNNING' ? 'text-purple-400 animate-pulse' : 'text-slate-700'}`}>{shot.status?.stylize === 'RUNNING' ? 'RUNNING' : 'NOT STARTED'}</div>}
                                                         </div>
                                                     </div>
 
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* Node: AI Processing Node */}
                                                     <div className="w-32 glass p-4 rounded-2xl border border-white/10 flex flex-col items-center opacity-30">
                                                         <span className="text-[7px] text-slate-500 uppercase font-black mb-1">Vid Model</span>
                                                         <p className="text-[9px] text-slate-300 font-bold uppercase font-mono">Veo 3.1</p>
@@ -2226,10 +3079,9 @@ class WorkflowManager:
 
                                                     <div className="text-4xl text-slate-800 font-black italic select-none">→</div>
 
-                                                    {/* Node: Final AI Shot */}
                                                     <div className={`w-[700px] glass p-4 rounded-[4rem] border transition-all duration-700 shadow-3xl ${isVidReady ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-white/5 opacity-20'}`}>
                                                         <div className="aspect-video bg-black rounded-[3rem] overflow-hidden relative shadow-inner">
-                                                            {isVidReady && shot.assets.video ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover shadow-2xl" autoPlay muted loop controls /> : <div className="h-full flex items-center justify-center font-mono text-xs text-slate-700 tracking-[0.5em] uppercase italic">Awaiting AI Processing</div>}
+                                                            {isVidReady && shot.assets.video ? <video src={`${getAssetUrl(shot.assets.video)}?t=${Date.now()}`} className="w-full h-full object-cover shadow-2xl" autoPlay muted loop controls /> : <div className={`h-full flex items-center justify-center text-[10px] italic uppercase font-black tracking-widest ${shot.status?.video_generate === 'RUNNING' ? 'text-blue-400 animate-pulse' : 'text-slate-700'}`}>{shot.status?.video_generate === 'RUNNING' ? 'RUNNING' : 'NOT STARTED'}</div>}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -2237,7 +3089,6 @@ class WorkflowManager:
                                         })}
                                     </div>
 
-                                    {/* Merge Output Node */}
                                     <div className="absolute w-[800px] glass p-14 rounded-[6rem] border-2 border-emerald-500/40 shadow-[0_0_120px_rgba(16,185,129,0.2)] z-20 text-white" style={{ left: `${finalMergeX}px`, top: `${masterSourceY - 150}px` }}>
                                         <div className="absolute -left-4 top-1/2 -translate-y-1/2 w-10 h-10 bg-emerald-500 rounded-full border-4 border-slate-950 shadow-[0_0_30px_#10b981]"></div>
                                         <div className="flex justify-between items-center mb-8 px-4">
@@ -2254,7 +3105,7 @@ class WorkflowManager:
                                             </button>
                                         </div>
                                         <div className="aspect-video bg-black rounded-[4rem] overflow-hidden border border-white/10 shadow-3xl relative">
-                                            {workflow.global_stages?.merge === 'SUCCESS' ? <video src={getAssetUrl('final_output.mp4')} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex flex-col items-center justify-center text-[10px] text-slate-600 font-mono italic p-12 text-center uppercase tracking-[0.6em]">Awaiting segments success...</div>}
+                                            {workflow.global_stages?.merge === 'SUCCESS' ? <video src={getAssetUrl('final_output.mp4')} className="w-full h-full object-cover" controls autoPlay muted loop /> : <div className="h-full flex flex-col items-center justify-center text-[10px] text-slate-700 font-mono italic p-12 text-center uppercase tracking-[0.6em]">Awaiting segments success...</div>}
                                         </div>
                                     </div>
                                 </div>
@@ -2262,21 +3113,28 @@ class WorkflowManager:
                         </div>
 
                         {/* Agent Sidebar */}
-                        <div className={`sidebar-transition flex flex-col glass rounded-[3rem] overflow-hidden border border-white/10 shadow-2xl relative ${isAgentVisible ? 'w-96 ml-4' : 'w-0 border-none'}`}>
-                            <button onClick={() => setIsAgentVisible(!isAgentVisible)} className={`absolute top-10 -left-5 w-10 h-10 glass rounded-full flex items-center justify-center text-blue-400 hover:text-white transition-all z-[100] border border-white/10 shadow-2xl ${!isAgentVisible ? 'translate-x-[-3rem] rotate-180' : ''}`}>
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" /></svg>
-                            </button>
+                        <div className={`sidebar-transition flex flex-col glass rounded-[3rem] overflow-hidden border border-white/10 shadow-2xl relative ${isAgentVisible ? 'w-96 ml-4' : 'w-0 border-none ml-0'}`}>
                             {isAgentVisible && (
                                 <div className="flex flex-col h-full text-white">
-                                    <div className="p-6 border-b border-white/5 bg-white/5 font-black uppercase text-xs tracking-widest text-emerald-400">Director Agent</div>
-                                    <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed">
+                                    <div className="p-6 border-b border-white/5 bg-white/5 flex items-center justify-between">
+                                        <h2 className="text-xs font-black uppercase text-emerald-400 tracking-widest">Executive Agent</h2>
+                                        <button 
+                                            onClick={() => setIsAgentVisible(false)} 
+                                            className="text-slate-400 hover:text-white transition-colors"
+                                        >
+                                            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M4 14h6v6M10 14l-6 6M20 10h-6V4M14 10l6-6" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar text-xs leading-relaxed text-slate-300">
                                         {messages.map((m, i) => (
                                             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                                                 <div className={`max-w-[90%] p-4 rounded-3xl ${m.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none shadow-lg' : 'bg-slate-800 text-slate-200 border border-white/5 shadow-xl'}`}>{m.text}</div>
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="p-6 bg-slate-900/80 border-t border-white/10">
+                                    <div className="p-6 bg-slate-900/80 border-t border-white/10 text-white">
                                         <div className="flex gap-3">
                                             <input value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendAgentMsg()} placeholder="Command..." className="flex-1 bg-slate-950 border border-white/10 rounded-2xl px-5 py-3 text-xs outline-none focus:border-blue-500 text-white" />
                                             <button onClick={sendAgentMsg} className="bg-blue-600 hover:bg-blue-500 px-5 py-3 rounded-2xl font-black text-xs shadow-lg">Send</button>
@@ -2285,6 +3143,21 @@ class WorkflowManager:
                                 </div>
                             )}
                         </div>
+                        
+                        {!isAgentVisible && (
+                            <button 
+                                onClick={() => setIsAgentVisible(true)} 
+                                className="fixed bottom-10 right-10 flex items-center gap-3 bg-[#020617] text-white px-5 py-3 rounded-full shadow-[0_0_25px_rgba(59,130,246,0.4)] hover:shadow-[0_0_35px_rgba(16,185,129,0.5)] hover:scale-105 transition-all z-50 group border border-white/20"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-slate-200 overflow-hidden border border-white/10">
+                                    <div className="w-full h-full bg-gradient-to-br from-blue-500 to-emerald-500 flex items-center justify-center text-white text-[10px] font-black italic">RE</div>
+                                </div>
+                                <div className="flex flex-col items-start leading-tight">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase">Chat</span>
+                                    <span className="text-sm font-black text-white">Executive Agent</span>
+                                </div>
+                            </button>
+                        )}
                     </div>
                 </div>
             );
@@ -2295,6 +3168,499 @@ class WorkflowManager:
     </script>
 </body>
 </html>
+</file>
+
+<file path="core/runner.py">
+# core/runner.py
+from pathlib import Path
+import shutil
+import subprocess
+import time
+import os
+import requests
+import io
+from PIL import Image
+
+from .workflow_io import save_workflow, load_workflow
+from .utils import get_ffmpeg_path
+
+
+def ensure_videos_dir(job_dir: Path) -> Path:
+    videos_dir = job_dir / "videos"
+    videos_dir.mkdir(parents=True, exist_ok=True)
+    return videos_dir
+
+
+def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
+    """
+    💡 使用 Imagen 4.0 或 Gemini 2.0 Image Gen 确保定妆图生成成功
+    🎬 Cinematography Fidelity: Hard-coded enforcement of source shot parameters
+    """
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
+
+    src = job_dir / shot["assets"]["first_frame"]
+    dst = job_dir / "stylized_frames" / f"{shot['shot_id']}.png"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    if dst.exists(): os.remove(dst)
+
+    global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
+    description = shot.get("description", "")
+
+    # 🎬 Extract cinematography parameters for fidelity enforcement
+    cinema = shot.get("cinematography", {})
+    shot_scale = cinema.get("shot_scale", "")
+    subject_position = cinema.get("subject_frame_position", "")
+    subject_orientation = cinema.get("subject_orientation", "")
+    gaze_direction = cinema.get("gaze_direction", "")
+    motion_vector = cinema.get("motion_vector", "")
+
+    # 🎯 Build cinematography constraint block
+    cinema_constraints = []
+
+    # 1️⃣ Shot Scale Mapping
+    scale_instructions = {
+        "EXTREME_WIDE": "EXTREME WIDE SHOT - Subject very small in frame, vast environment dominates",
+        "WIDE": "WIDE SHOT - Full body visible, significant environment context",
+        "MEDIUM_WIDE": "MEDIUM WIDE SHOT - Subject from knees up, environmental context",
+        "MEDIUM": "MEDIUM SHOT - Subject from waist up, balanced framing",
+        "MEDIUM_CLOSE": "MEDIUM CLOSE-UP - Subject from chest up, intimate but contextual",
+        "CLOSE_UP": "CLOSE-UP - Face fills most of frame, minimal background",
+        "EXTREME_CLOSE_UP": "EXTREME CLOSE-UP - Single feature (eyes, lips) fills frame"
+    }
+    if shot_scale and shot_scale in scale_instructions:
+        cinema_constraints.append(f"📐 SHOT SCALE: {scale_instructions[shot_scale]}")
+
+    # 2️⃣ Subject Position in Frame
+    if subject_position:
+        cinema_constraints.append(f"📍 FRAME POSITION: Subject MUST be positioned at {subject_position} of the 16:9 frame")
+
+    # 3️⃣ Orientation & Facing
+    if subject_orientation:
+        orientation_map = {
+            "facing-camera": "Subject facing directly toward camera (frontal view)",
+            "back-to-camera": "Subject's back facing camera (rear view)",
+            "profile-left": "Subject in left profile (nose pointing to frame left)",
+            "profile-right": "Subject in right profile (nose pointing to frame right)",
+            "three-quarter-left": "Subject in 3/4 view facing left (showing right side of face)",
+            "three-quarter-right": "Subject in 3/4 view facing right (showing left side of face)"
+        }
+        orient_desc = orientation_map.get(subject_orientation, subject_orientation)
+        cinema_constraints.append(f"🧭 BODY ORIENTATION: {orient_desc}")
+
+    # 4️⃣ Gaze Direction
+    if gaze_direction:
+        gaze_map = {
+            "looking-at-camera": "Eyes looking directly into camera lens",
+            "looking-left": "Eyes directed toward the left side of frame",
+            "looking-right": "Eyes directed toward the right side of frame",
+            "looking-up": "Eyes directed upward",
+            "looking-down": "Eyes directed downward",
+            "looking-off-screen-left": "Eyes looking past the left edge of frame",
+            "looking-off-screen-right": "Eyes looking past the right edge of frame"
+        }
+        gaze_desc = gaze_map.get(gaze_direction, gaze_direction)
+        cinema_constraints.append(f"👁️ GAZE DIRECTION: {gaze_desc}")
+
+    # 5️⃣ Motion Vector
+    if motion_vector and motion_vector != "static":
+        cinema_constraints.append(f"🏃 MOTION VECTOR: Capture mid-action of '{motion_vector}' - body pose and motion blur should indicate this movement")
+
+    # Build final constraint string
+    cinematography_block = ""
+    if cinema_constraints:
+        cinematography_block = "\n\n🎬 CINEMATOGRAPHY FIDELITY - MANDATORY CONSTRAINTS (from source shot):\n" + "\n".join(cinema_constraints) + "\n⚠️ These parameters are LOCKED and must be preserved exactly as specified."
+
+    # 🎨 Conditional Design Elements: Only trigger graphic layouts if explicitly requested
+    design_keywords = ['poster', 'layout', 'magazine', 'border', 'collage', 'graphic design', 'storyboard paper']
+    style_lower = global_style.lower()
+    is_design_style = any(kw in style_lower for kw in design_keywords)
+
+    if is_design_style:
+        # User explicitly requested a design/layout style
+        prompt = f"""STYLIZED GRAPHIC DESIGN COMPOSITION.
+Create a {global_style} layout with intentional design elements.
+Subject: {description}.
+Style: {global_style} - Apply graphic design aesthetics as requested.
+Format: 16:9 aspect ratio with artistic layout elements.{cinematography_block}"""
+    else:
+        # 🎬 DEFAULT: Full-bleed cinematic film still using structured prompt format
+        # Format: [Subject], [Action/Pose], [Environment], [Style & Atmosphere], [Lighting & Color], [Camera & Tech Specs]
+
+        # Extract action/pose from motion vector
+        action_pose = motion_vector if motion_vector and motion_vector != "static" else "in a natural pose"
+
+        # Build structured prompt components
+        subject_block = f"[SUBJECT]: {description}"
+        action_block = f"[ACTION/POSE]: {action_pose}, captured mid-motion with dynamic energy"
+        environment_block = "[ENVIRONMENT]: Immersive scene environment extending to all edges of the 16:9 frame, rich background details"
+        style_block = f"[STYLE & ATMOSPHERE]: {global_style} aesthetic, visually striking, enhanced visual impact with refined details and textures"
+        lighting_block = "[LIGHTING & COLOR]: Dramatic cinematic lighting, rich color grading, depth through light and shadow layers, volumetric atmosphere"
+        tech_block = "[CAMERA & TECH]: 35mm cinematic lens, 8K ultra high resolution, shallow depth of field, natural bokeh, film grain texture"
+
+        prompt = f"""PROFESSIONAL CINEMATIC FILM STILL - TEXT-TO-IMAGE GENERATION
+
+{subject_block}
+{action_block}
+{environment_block}
+{style_block}
+{lighting_block}
+{tech_block}
+{cinematography_block}
+
+COMPOSITION RULES:
+- Full-bleed edge-to-edge rendering filling 100% of the 16:9 canvas
+- ZERO borders, margins, or white space - render as if captured from cinema camera sensor
+- Subject photographed as cinematic scene, NOT shrunk into centered box
+- Professional cinematography with rule of thirds and depth of field
+- ALL cinematography constraints above MUST be strictly followed
+
+QUALITY ENHANCEMENT:
+- More visually impactful than standard output
+- Rich detail textures and refined material quality
+- Dramatic light/shadow interplay for depth
+- Cinematic color palette with professional grading
+
+FORBIDDEN:
+- Any white/black borders or margins
+- Changing shot scale, subject position, orientation, or gaze from source
+- Poster layouts, magazine compositions, or storyboard aesthetics
+- Any graphic design elements unless explicitly in style prompt
+
+--ar 16:9"""
+
+    print(f"️  AI 正在尝试生成定妆图: {shot['shot_id']}")
+
+    try:
+        print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
+        response = client.models.generate_images(
+            model="models/imagen-4.0-generate-001",
+            prompt=prompt,
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="16:9"
+            )
+        )
+        if response.generated_images:
+            gen_img = response.generated_images[0]
+            if hasattr(gen_img.image, 'save'):
+                gen_img.image.save(dst)
+            else:
+                with open(dst, 'wb') as f: f.write(gen_img.image.image_bytes)
+            print(f"✅ 使用 Imagen 4.0 生成成功！")
+            return f"stylized_frames/{dst.name}"
+    except Exception as e:
+        print(f"⚠️ Imagen 4.0 调用失败: {str(e)[:100]}...")
+
+    try:
+        print(f"📡 尝试调用集成生图模型 (models/gemini-2.0-flash-exp-image-generation)...")
+        response = client.models.generate_content(
+            model="models/gemini-2.0-flash-exp-image-generation",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"]
+            )
+        )
+        for part in response.parts:
+            if part.inline_data is not None:
+                img = Image.open(io.BytesIO(part.inline_data.data))
+                img.save(dst)
+                print(f"✅ 使用 Gemini 2.0 集成模型生成成功！")
+                return f"stylized_frames/{dst.name}"
+    except Exception as e:
+        print(f"❌ 所有生图模型均失败: {str(e)[:100]}...")
+
+    print("⚠️ 执行原图占位。")
+    shutil.copyfile(src, dst)
+    return f"stylized_frames/{dst.name}"
+
+
+def mock_generate_video(job_dir: Path, shot: dict) -> str:
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+    if out_path.exists(): os.remove(out_path)
+    src_video = job_dir / "input.mp4"
+    ffmpeg = get_ffmpeg_path()
+    cmd = [ffmpeg, "-y", "-i", str(src_video), "-t", "1.0", "-c", "copy", str(out_path)]
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return f"videos/{out_path.name}"
+
+
+def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    # 使用与 video_generator.py 相同的客户端初始化方式
+    client = genai.Client(api_key=api_key)
+
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot['shot_id']}.mp4"
+    if out_path.exists(): os.remove(out_path)
+
+    img_rel = shot.get("assets", {}).get("stylized_frame") or f"stylized_frames/{shot['shot_id']}.png"
+    img_path = job_dir / img_rel
+
+    if not img_path.exists():
+        ai_stylize_frame(job_dir, wf, shot)
+
+    print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
+
+    image_bytes = img_path.read_bytes()
+    description = shot.get('description', '')
+    style = wf.get('global', {}).get('style_prompt', '')
+
+    # 🎬 Extract cinematography parameters for video fidelity
+    cinema = shot.get("cinematography", {})
+    shot_scale = cinema.get("shot_scale", "")
+    subject_position = cinema.get("subject_frame_position", "")
+    subject_orientation = cinema.get("subject_orientation", "")
+    gaze_direction = cinema.get("gaze_direction", "")
+    motion_vector = cinema.get("motion_vector", "static")
+
+    # Build video-specific cinematography constraints
+    video_constraints = []
+    if shot_scale:
+        video_constraints.append(f"Maintain {shot_scale} framing throughout")
+    if subject_position:
+        video_constraints.append(f"Subject stays at {subject_position} of frame")
+    if subject_orientation:
+        video_constraints.append(f"Subject maintains {subject_orientation} body angle")
+    if gaze_direction:
+        video_constraints.append(f"Gaze direction: {gaze_direction}")
+
+    constraints_str = ". ".join(video_constraints) if video_constraints else ""
+
+    # 🎬 Structured Image-to-Video Prompt Format
+    # Format: [Camera Movement], [Specific Action], [Physics Details], [Atmosphere Change]
+
+    # Determine camera movement based on motion vector
+    if motion_vector and motion_vector != "static":
+        if "walking" in motion_vector or "running" in motion_vector:
+            camera_movement = "subtle tracking shot following subject movement"
+        elif "toward" in motion_vector:
+            camera_movement = "gentle dolly back as subject approaches"
+        elif "away" in motion_vector:
+            camera_movement = "slow push in as subject recedes"
+        else:
+            camera_movement = "steady shot with minimal camera drift"
+        specific_action = f"Subject performs: {motion_vector}"
+    else:
+        camera_movement = "locked static shot with subtle breathing movement"
+        specific_action = "Subject maintains pose with natural micro-movements (breathing, blinking, subtle weight shifts)"
+
+    # Physics details for realism
+    physics_details = "natural physics: hair/fabric responds to movement, ambient particles float in light beams, subtle environmental motion (leaves, dust, reflections)"
+
+    # Atmosphere continuity
+    atmosphere_change = f"maintain {style} atmosphere throughout, consistent lighting evolution, seamless style continuity"
+
+    prompt = f"""PROFESSIONAL IMAGE-TO-VIDEO GENERATION - 3-5 SECOND CINEMATIC CLIP
+
+[CAMERA MOVEMENT]: {camera_movement}
+[SPECIFIC ACTION]: {specific_action}
+[PHYSICS DETAILS]: {physics_details}
+[ATMOSPHERE]: {atmosphere_change}
+
+SCENE CONTEXT: {description}
+ART STYLE: {style} - Maintain CONSISTENT style across ALL frames
+
+🎬 CINEMATOGRAPHY LOCK (from source shot - DO NOT CHANGE):
+{constraints_str}
+
+MOTION QUALITY REQUIREMENTS:
+- High motion quality, cinematic fluidity
+- Smooth interpolation between frames
+- Subject position and composition MUST remain STABLE
+- No sudden flips, mirror effects, or jarring camera changes
+- Preserve exact shot scale and framing from reference image
+
+PHYSICS ENHANCEMENT:
+- Realistic material physics (cloth flow, hair dynamics)
+- Environmental interaction (wind effects, light particles)
+- Natural motion blur on moving elements
+- Atmospheric depth continuity
+
+CRITICAL: Cinematography parameters are LOCKED - preserve exactly as specified.
+high motion quality, cinematic, professional cinematography"""
+
+    # 🔄 自愈式重试逻辑：遇到 429 错误时自动等待并重试
+    max_retries = 3
+    retry_wait_seconds = 60
+
+    for attempt in range(max_retries):
+        try:
+            # image 作为独立参数传递，不在 config 内
+            operation = client.models.generate_videos(
+                model="veo-3.1-generate-preview",
+                prompt=prompt,
+                image=types.Image(
+                    image_bytes=image_bytes,
+                    mime_type="image/png"
+                ),
+                config=types.GenerateVideosConfig(
+                    aspect_ratio="16:9"
+                )
+            )
+
+            print(f"⏳ 视频正在云端渲染 (Operation ID: {operation.name})")
+
+            poll_count = 0
+            max_polls = 60  # 20 minutes max
+            while not operation.done:
+                poll_count += 1
+                if poll_count > max_polls:
+                    raise RuntimeError(f"Veo 轮询超时: 已等待超过 20 分钟")
+                print(f"⏳ 视频渲染中... (轮询 {poll_count})")
+                time.sleep(20)
+                operation = client.operations.get(operation)
+
+            # 检查错误
+            if operation.error:
+                raise RuntimeError(f"Veo 后端报错: {operation.error}")
+
+            # 检查结果
+            if not operation.result or not operation.result.generated_videos:
+                raise RuntimeError("Veo 任务完成但未返回视频数据。原因：可能触发了内容安全审核拦截。")
+
+            generated_video = operation.result.generated_videos[0]
+
+            # 优先使用 SDK 原生 save 方法
+            try:
+                generated_video.video.save(str(out_path))
+                print(f"💾 视频生成成功 (SDK save): {out_path}")
+                return f"videos/{out_path.name}"
+            except Exception as save_err:
+                print(f"⚠️ SDK save 失败 ({save_err})，尝试手动下载...")
+
+            # 备用：手动下载
+            file_id = None
+            video_obj = generated_video.video if hasattr(generated_video, 'video') else generated_video
+
+            if hasattr(video_obj, 'name') and video_obj.name:
+                file_id = video_obj.name if "/" in video_obj.name else f"files/{video_obj.name}"
+            elif hasattr(video_obj, 'uri') and video_obj.uri:
+                file_id = f"files/{video_obj.uri.split('/')[-1]}"
+
+            if not file_id:
+                raise RuntimeError(f"无法从响应中解析有效的 File ID: {type(video_obj).__name__}")
+
+            # 防御性修复：file_id 可能自带 ?alt=media 或 ?key=...
+            clean_file_id = file_id.split("?", 1)[0]
+
+            print(f"✅ 生成成功，正在下载文件: {clean_file_id}")
+
+            download_url = f"https://generativelanguage.googleapis.com/v1beta/{clean_file_id}"
+            query_params = {
+                "alt": "media",
+                "key": api_key,
+            }
+
+            response = requests.get(
+                download_url,
+                params=query_params,
+                stream=True,
+            )
+
+            if response.status_code == 200:
+                with open(out_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=1024*1024): f.write(chunk)
+                print(f"💾 视频生成成功 (手动下载): {out_path}")
+                return f"videos/{out_path.name}"
+            else:
+                raise RuntimeError(f"下载失败: 状态码 {response.status_code}")
+
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = "429" in error_str or "rate" in error_str or "quota" in error_str or "resource_exhausted" in error_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                wait_time = retry_wait_seconds * (attempt + 1)  # 递增等待时间
+                print(f"⚠️ 触发 RPM 限制 (429)，等待 {wait_time} 秒后重试 ({attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"❌ Veo 失败: {str(e)}")
+                raise e
+
+    # 如果所有重试都失败
+    raise RuntimeError(f"Veo 生成失败：已重试 {max_retries} 次")
+
+
+def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots_to_process = []
+    for shot in wf.get("shots", []):
+        sid = shot.get("shot_id")
+        if target_shot and sid != target_shot: continue
+        status = shot.get("status", {}).get("stylize", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
+        shots_to_process.append(shot)
+
+    for idx, shot in enumerate(shots_to_process):
+        sid = shot.get("shot_id")
+
+        # 🚦 RPM 限流：批量执行时，每个分镜之间休眠 35 秒
+        if idx > 0 and target_shot is None:
+            print(f"⏳ RPM 限流：等待 35 秒后处理下一个分镜...")
+            time.sleep(35)
+
+        shot.setdefault("status", {})["stylize"] = "RUNNING"
+        save_workflow(job_dir, wf)
+        try:
+            rel_path = ai_stylize_frame(job_dir, wf, shot)
+            shot.setdefault("assets", {})["stylized_frame"] = rel_path
+            shot["status"]["stylize"] = "SUCCESS"
+            print(f"✅ Stylize SUCCESS: {sid}")
+        except Exception as e:
+            shot["status"]["stylize"] = "FAILED"
+            shot.setdefault("errors", {})["stylize"] = str(e)
+        save_workflow(job_dir, wf)
+
+
+def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
+    shots_to_process = []
+    for shot in wf.get("shots", []):
+        sid = shot.get("shot_id")
+        if target_shot and sid != target_shot: continue
+        status = shot.get("status", {}).get("video_generate", "NOT_STARTED")
+        if not target_shot and status not in ("NOT_STARTED", "FAILED"): continue
+        shots_to_process.append(shot)
+
+    for idx, shot in enumerate(shots_to_process):
+        sid = shot.get("shot_id")
+
+        # 🚦 RPM 限流：批量执行时，每个分镜之间休眠 35 秒
+        if idx > 0 and target_shot is None:
+            print(f"⏳ RPM 限流：等待 35 秒后处理下一个分镜...")
+            time.sleep(35)
+
+        shot.setdefault("status", {})["video_generate"] = "RUNNING"
+        save_workflow(job_dir, wf)
+        try:
+            video_model = wf.get("global", {}).get("video_model", "mock")
+            if video_model == "veo":
+                rel_video_path = veo_generate_video(job_dir, wf, shot)
+            else:
+                rel_video_path = mock_generate_video(job_dir, shot)
+            shot.setdefault("assets", {})["video"] = rel_video_path
+            shot["status"]["video_generate"] = "SUCCESS"
+            print(f"✅ Video SUCCESS: {sid}")
+        except Exception as e:
+            shot["status"]["video_generate"] = "FAILED"
+            shot.setdefault("errors", {})["video_generate"] = str(e)
+            print(f"❌ Video FAILED: {sid} -> {e}")
+        save_workflow(job_dir, wf)
+
+
+def run_pipeline(job_dir: Path, target_shot: str | None = None) -> None:
+    wf = load_workflow(job_dir)
+    run_stylize(job_dir, wf, target_shot=target_shot)
+    wf = load_workflow(job_dir)
+    run_video_generate(job_dir, wf, target_shot=target_shot)
 </file>
 
 </files>
