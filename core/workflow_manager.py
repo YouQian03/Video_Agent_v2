@@ -98,11 +98,21 @@ class WorkflowManager:
                 "camera_type": camera_type
             }
 
+            # 🎬 SocialSaver 扩展字段：视听层信息
+            lighting = s.get("lighting", "")
+            music_mood = s.get("music_mood", "")
+            dialogue_voiceover = s.get("dialogue_voiceover", "")
+            content_analysis = s.get("content_analysis", narrative_desc)
+
             shots.append({
                 "shot_id": sid,
                 "start_time": s.get("start_time"),
                 "end_time": s.get("end_time"),
                 "description": full_description,
+                "content_analysis": content_analysis,  # 🎬 场景内容分析
+                "lighting": lighting,  # 🎬 SocialSaver: 光线描述
+                "music_mood": music_mood,  # 🎬 SocialSaver: 音乐氛围
+                "dialogue_voiceover": dialogue_voiceover,  # 🎬 SocialSaver: 对白/旁白
                 "cinematography": cinematography_data,  # 🎬 Hard-coded source cinematography for fidelity enforcement
                 "entities": [],
                 "assets": {

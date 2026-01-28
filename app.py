@@ -3,17 +3,93 @@ import os
 import uuid
 import shutil
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+import re
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List, Union
 
 from core.workflow_manager import WorkflowManager
 from core.agent_engine import AgentEngine
 
-app = FastAPI(title="AI 导演工作台 API")
+app = FastAPI(title="AI 导演工作台 API / SocialSaver Backend")
+
+
+# ============================================================
+# SocialSaver 数据格式转换函数
+# ============================================================
+
+def convert_shot_to_socialsaver(shot: Dict[str, Any], job_id: str, base_url: str = "") -> Dict[str, Any]:
+    """
+    将 ReTake 的 shot 格式转换为 SocialSaver 的 StoryboardShot 格式
+    """
+    # 提取 shot_number (shot_01 -> 1)
+    shot_id = shot.get("shot_id", "shot_01")
+    shot_number = int(re.search(r'\d+', shot_id).group()) if re.search(r'\d+', shot_id) else 1
+
+    # 提取描述（去除摄影参数标签）
+    description = shot.get("description", "")
+    # 去除 [SCALE: ...] [POSITION: ...] 等标签，保留纯叙事
+    visual_description = re.sub(r'\[(?:SCALE|POSITION|ORIENTATION|GAZE|MOTION):[^\]]*\]', '', description).strip()
+
+    # 获取摄影参数
+    cinematography = shot.get("cinematography", {})
+
+    # 获取资源路径
+    assets = shot.get("assets", {})
+    first_frame = assets.get("first_frame", "")
+    if first_frame and base_url:
+        first_frame = f"{base_url}/assets/{job_id}/{first_frame}"
+
+    # 获取扩展字段（新增的 lighting, music, dialogue）
+    # 这些可能在 storyboard.json 原始数据中
+
+    return {
+        "shotNumber": shot_number,
+        "firstFrameImage": first_frame,
+        "visualDescription": visual_description,
+        "contentDescription": shot.get("content_analysis", visual_description),
+        "startSeconds": float(shot.get("start_time", 0) or 0),
+        "endSeconds": float(shot.get("end_time", 0) or 0),
+        "durationSeconds": float(shot.get("end_time", 0) or 0) - float(shot.get("start_time", 0) or 0),
+        "shotSize": cinematography.get("shot_scale", "MEDIUM"),
+        "cameraAngle": cinematography.get("subject_orientation", "facing-camera"),
+        "cameraMovement": cinematography.get("motion_vector", "static"),
+        "focalLengthDepth": cinematography.get("camera_type", "Static"),
+        "lighting": shot.get("lighting") or cinematography.get("lighting", "Natural lighting"),
+        "music": shot.get("music_mood", ""),
+        "dialogueVoiceover": shot.get("dialogue_voiceover", "")
+    }
+
+
+def convert_workflow_to_socialsaver(workflow: Dict[str, Any], base_url: str = "") -> Dict[str, Any]:
+    """
+    将完整的 ReTake workflow 转换为 SocialSaver 格式
+    """
+    job_id = workflow.get("job_id", "")
+    shots = workflow.get("shots", [])
+
+    storyboard = [
+        convert_shot_to_socialsaver(shot, job_id, base_url)
+        for shot in shots
+    ]
+
+    return {
+        "jobId": job_id,
+        "sourceVideo": workflow.get("source_video", ""),
+        "globalStyle": workflow.get("global", {}).get("style_prompt", ""),
+        "storyboard": storyboard,
+        "status": {
+            "analyze": workflow.get("global_stages", {}).get("analyze", "NOT_STARTED"),
+            "stylize": workflow.get("global_stages", {}).get("stylize", "NOT_STARTED"),
+            "videoGen": workflow.get("global_stages", {}).get("video_gen", "NOT_STARTED"),
+            "merge": workflow.get("global_stages", {}).get("merge", "NOT_STARTED")
+        }
+    }
+
+
 Path("jobs").mkdir(parents=True, exist_ok=True)
 Path("temp_uploads").mkdir(parents=True, exist_ok=True)
 
@@ -133,6 +209,83 @@ async def update_shot_params(req: ShotUpdateRequest):
     
     res = manager.apply_agent_action(action)
     return res
+
+# ============================================================
+# SocialSaver 专用 API 端点
+# ============================================================
+
+@app.get("/api/job/{job_id}/storyboard")
+async def get_storyboard_socialsaver(job_id: str):
+    """
+    获取 SocialSaver 格式的分镜表
+    返回格式与 SocialSaver 前端的 StoryboardShot[] 类型兼容
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    manager.job_id = job_id
+    manager.job_dir = job_dir
+    workflow = manager.load()
+
+    # 构建 base_url（用于资源路径）
+    # 注意：在生产环境中应该从请求头或配置获取
+    base_url = ""
+
+    result = convert_workflow_to_socialsaver(workflow, base_url)
+    return result
+
+
+@app.get("/api/job/{job_id}/shots/{shot_id}")
+async def get_single_shot_socialsaver(job_id: str, shot_id: str):
+    """
+    获取单个分镜的 SocialSaver 格式数据
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    manager.job_id = job_id
+    manager.job_dir = job_dir
+    workflow = manager.load()
+
+    for shot in workflow.get("shots", []):
+        if shot.get("shot_id") == shot_id:
+            return convert_shot_to_socialsaver(shot, job_id, "")
+
+    raise HTTPException(status_code=404, detail=f"Shot not found: {shot_id}")
+
+
+@app.get("/api/job/{job_id}/status")
+async def get_job_status(job_id: str):
+    """
+    获取作业状态摘要（用于前端轮询）
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    manager.job_id = job_id
+    manager.job_dir = job_dir
+    workflow = manager.load()
+
+    shots = workflow.get("shots", [])
+    total = len(shots)
+    stylized = sum(1 for s in shots if s.get("status", {}).get("stylize") == "SUCCESS")
+    video_done = sum(1 for s in shots if s.get("status", {}).get("video_generate") == "SUCCESS")
+    running = sum(1 for s in shots if s.get("status", {}).get("stylize") == "RUNNING" or s.get("status", {}).get("video_generate") == "RUNNING")
+
+    return {
+        "jobId": job_id,
+        "totalShots": total,
+        "stylizedCount": stylized,
+        "videoGeneratedCount": video_done,
+        "runningCount": running,
+        "canMerge": video_done == total and total > 0,
+        "globalStages": workflow.get("global_stages", {}),
+        "globalStyle": workflow.get("global", {}).get("style_prompt", "")
+    }
+
 
 @app.post("/api/run/{node_type}")
 async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: Optional[str] = None, job_id: Optional[str] = None):

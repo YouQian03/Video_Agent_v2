@@ -99,7 +99,12 @@ DIRECTOR_METAPROMPT = r"""
 === 时间与其他字段 ===
 - start_time, end_time, duration_seconds: 时间信息
 - shot_type, camera_angle: 景别与角度
-- focus_and_depth, lighting: 其他信息
+- focus_and_depth: 焦点与景深描述
+
+=== 视听层字段（SocialSaver 扩展）===
+- lighting: 光线描述，如 "Natural daylight, soft shadows", "High contrast noir lighting", "Golden hour warm tones", "Neon-lit night scene"
+- music_mood: 音乐/配乐氛围描述，如 "Tense orchestral", "Upbeat electronic", "Melancholic piano", "Ambient silence", "Dramatic crescendo"
+- dialogue_voiceover: 对白或旁白内容（如有），直接引用原文或描述内容。无对白填 null
 
 无信息请填 null。
 仅输出纯 JSON。
