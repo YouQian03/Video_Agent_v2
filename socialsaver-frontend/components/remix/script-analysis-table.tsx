@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
+import { saveScriptToLibrary } from "@/lib/asset-storage"
 import type { ScriptAnalysis } from "@/lib/types/remix"
 
 interface ScriptAnalysisTableProps {
@@ -24,8 +25,7 @@ export function ScriptAnalysisTable({ data, showSaveButton = true }: ScriptAnaly
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
 
   const handleSaveToLibrary = (name: string, tags: string[]) => {
-    console.log("Saving script to library:", { name, tags, data })
-    // TODO: Integrate with actual asset library storage
+    saveScriptToLibrary(name, tags, data)
   }
 
   const rows = [

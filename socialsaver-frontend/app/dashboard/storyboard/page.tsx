@@ -10,6 +10,7 @@ import { StoryboardTable } from "@/components/remix/storyboard-table"
 import { Loader2, Download, CheckCircle, FileJson, FolderOpen, Video, Play, AlertCircle } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import type { RemixAnalysisResult, StoryboardShot } from "@/lib/types/remix"
+import { saveStoryboardToLibrary } from "@/lib/asset-storage"
 
 // 🔌 Real API Integration
 import { uploadVideo, getStoryboard, getAssetUrl } from "@/lib/api"
@@ -336,25 +337,20 @@ export default function StoryboardAnalysisPage() {
   }
   
   const handleSaveToLibrary = (name: string, tags: string[]) => {
-    // In a real app, this would save to the database
-    const assetData = {
-      id: `analysis-${Date.now()}`,
+    if (!analysisResult) return
+    saveStoryboardToLibrary(
       name,
-      type: "storyboard" as const,
       tags,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      sourceVideo: {
-        name: uploadedFiles[0]?.name || "Unknown",
-        size: uploadedFiles[0]?.size || 0,
+      {
+        storyTheme: analysisResult.storyTheme,
+        scriptAnalysis: analysisResult.scriptAnalysis,
+        storyboard: analysisResult.storyboard,
       },
-      data: {
-        storyTheme: analysisResult?.storyTheme,
-        scriptAnalysis: analysisResult?.scriptAnalysis,
-        storyboard: analysisResult?.storyboard,
-      },
-    }
-    console.log("Saving to library:", assetData)
+      uploadedFiles[0] ? {
+        name: uploadedFiles[0].name,
+        size: uploadedFiles[0].size,
+      } : undefined
+    )
   }
 
   return (

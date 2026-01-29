@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
+import { saveShotToLibrary } from "@/lib/asset-storage"
 import type { StoryboardShot } from "@/lib/types/remix"
 
 interface StoryboardTableProps {
@@ -31,9 +32,8 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
   }
 
   const handleSaveToLibrary = (name: string, tags: string[]) => {
-    // In a real app, this would save to a database or state management
-    console.log("Saving storyboard shot to library:", { name, tags, shot: selectedShot })
-    // TODO: Integrate with actual asset library storage
+    if (!selectedShot) return
+    saveShotToLibrary(name, tags, selectedShot)
   }
 
   // Handle undefined or empty data

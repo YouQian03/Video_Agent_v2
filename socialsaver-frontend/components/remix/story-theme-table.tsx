@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
+import { saveThemeToLibrary } from "@/lib/asset-storage"
 import type { StoryThemeAnalysis } from "@/lib/types/remix"
 
 interface StoryThemeTableProps {
@@ -24,8 +25,7 @@ export function StoryThemeTable({ data, showSaveButton = true }: StoryThemeTable
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
 
   const handleSaveToLibrary = (name: string, tags: string[]) => {
-    console.log("Saving theme to library:", { name, tags, data })
-    // TODO: Integrate with actual asset library storage
+    saveThemeToLibrary(name, tags, data)
   }
 
   const rows = [
