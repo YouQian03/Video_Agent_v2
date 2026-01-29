@@ -7,9 +7,12 @@ import { SimpleVideoUpload } from "@/components/simple-video-upload"
 import { StoryThemeTable } from "@/components/remix/story-theme-table"
 import { ScriptAnalysisTable } from "@/components/remix/script-analysis-table"
 import { StoryboardTable } from "@/components/remix/storyboard-table"
-import { Loader2, Download, CheckCircle, FileJson, FolderOpen, Video, Play } from "lucide-react"
+import { Loader2, Download, CheckCircle, FileJson, FolderOpen, Video, Play, AlertCircle } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import type { RemixAnalysisResult, StoryboardShot } from "@/lib/types/remix"
+
+// 🔌 Real API Integration
+import { uploadVideo, getStoryboard, getAssetUrl } from "@/lib/api"
 
 type AnalysisStep = "upload" | "analyzing" | "results"
 
@@ -213,22 +216,86 @@ export default function StoryboardAnalysisPage() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null)
 
+  // 🔌 Real API State
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
+
   const handleVideoSubmit = async (files: File[]) => {
     setUploadedFiles(files)
-    
+    setApiError(null)
+
     // Create preview URL for the first video
     if (files.length > 0) {
       const url = URL.createObjectURL(files[0])
       setVideoPreviewUrl(url)
     }
-    
+
     setStep("analyzing")
 
-    // Simulate analysis
-    await new Promise((resolve) => setTimeout(resolve, 3000))
+    try {
+      // 🔌 Real API Call: Upload video and trigger analysis
+      const videoFile = files[0]
+      if (!videoFile) {
+        throw new Error("No video file selected")
+      }
 
-    setAnalysisResult(mockAnalysisResult)
-    setStep("results")
+      const uploadResult = await uploadVideo(videoFile)
+      setCurrentJobId(uploadResult.job_id)
+
+      // Poll for storyboard data
+      let retries = 0
+      const maxRetries = 60 // Max 3 minutes
+      let storyboardData = null
+
+      while (retries < maxRetries) {
+        try {
+          storyboardData = await getStoryboard(uploadResult.job_id)
+          if (storyboardData.storyboard && storyboardData.storyboard.length > 0) {
+            break
+          }
+        } catch (e) {
+          // Still processing, continue polling
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        retries++
+      }
+
+      if (!storyboardData || !storyboardData.storyboard || storyboardData.storyboard.length === 0) {
+        throw new Error("Video analysis timeout or failed")
+      }
+
+      // Process image URLs to be full URLs
+      const processedStoryboard: StoryboardShot[] = storyboardData.storyboard.map((shot) => ({
+        ...shot,
+        firstFrameImage: shot.firstFrameImage
+          ? getAssetUrl(uploadResult.job_id, shot.firstFrameImage)
+          : "",
+      }))
+
+      // Calculate total duration
+      const totalDuration = processedStoryboard.reduce((sum, s) => sum + s.durationSeconds, 0)
+
+      // Create analysis result with real storyboard + mock theme/script
+      const realAnalysisResult: RemixAnalysisResult = {
+        storyTheme: {
+          ...mockAnalysisResult.storyTheme,
+          basicInfo: {
+            ...mockAnalysisResult.storyTheme.basicInfo,
+            title: storyboardData.sourceVideo || videoFile.name,
+            duration: `${Math.round(totalDuration)}s`,
+          },
+        },
+        scriptAnalysis: mockAnalysisResult.scriptAnalysis,
+        storyboard: processedStoryboard,
+      }
+
+      setAnalysisResult(realAnalysisResult)
+      setStep("results")
+    } catch (error) {
+      console.error("Upload/Analysis error:", error)
+      setApiError(error instanceof Error ? error.message : "Analysis failed")
+      setStep("upload")
+    }
   }
 
   const handleExportJSON = () => {
@@ -263,6 +330,9 @@ export default function StoryboardAnalysisPage() {
       URL.revokeObjectURL(videoPreviewUrl)
       setVideoPreviewUrl(null)
     }
+    // Reset API state
+    setCurrentJobId(null)
+    setApiError(null)
   }
   
   const handleSaveToLibrary = (name: string, tags: string[]) => {
@@ -318,8 +388,19 @@ export default function StoryboardAnalysisPage() {
       </div>
 
       {/* Step: Upload */}
+      {/* Step: Upload */}
       {step === "upload" && (
-        <SimpleVideoUpload onSubmit={handleVideoSubmit} isLoading={false} />
+        <>
+          {apiError && (
+            <Card className="bg-red-500/10 border-red-500/30 mb-4">
+              <CardContent className="py-4 flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 text-red-500" />
+                <p className="text-red-500">{apiError}</p>
+              </CardContent>
+            </Card>
+          )}
+          <SimpleVideoUpload onSubmit={handleVideoSubmit} isLoading={false} />
+        </>
       )}
 
       {/* Step: Analyzing */}
