@@ -34,6 +34,7 @@ from core.film_ir_io import (
 from core.meta_prompts import (
     STORY_THEME_ANALYSIS_PROMPT,
     convert_story_theme_to_frontend,
+    extract_story_theme_abstract,
     NARRATIVE_EXTRACTION_PROMPT,
     convert_narrative_to_frontend,
     extract_narrative_abstract,
@@ -221,18 +222,22 @@ class FilmIRManager:
             return {"status": "error", "reason": f"Video file not found: {video_path}"}
 
         # ============================================================
-        # Step 1: Story Theme Analysis (支柱 I)
+        # Step 1: Story Theme Analysis (支柱 I) - Concrete + Abstract 融合输出
         # ============================================================
         print(f"📊 [Stage 1.1] Analyzing Story Theme...")
 
         try:
             story_theme_result = self._analyze_story_theme(video_path)
             if story_theme_result:
-                # 转换为前端格式并存储
-                frontend_format = convert_story_theme_to_frontend(story_theme_result)
-                self.ir["pillars"]["I_storyTheme"]["concrete"] = frontend_format
+                # 提取双层数据
+                concrete_data = convert_story_theme_to_frontend(story_theme_result)
+                abstract_data = extract_story_theme_abstract(story_theme_result)
+
+                # 存储到支柱 I
+                self.ir["pillars"]["I_storyTheme"]["concrete"] = concrete_data
+                self.ir["pillars"]["I_storyTheme"]["abstract"] = abstract_data
                 self.save()
-                print(f"✅ [Stage 1.1] Story Theme analysis completed")
+                print(f"✅ [Stage 1.1] Story Theme analysis completed (concrete + abstract)")
             else:
                 print(f"⚠️ [Stage 1.1] Story Theme analysis returned empty result")
         except Exception as e:

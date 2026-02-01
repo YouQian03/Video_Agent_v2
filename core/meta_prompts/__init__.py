@@ -6,7 +6,8 @@ Meta Prompts 模块
 
 from .story_theme_analysis import (
     STORY_THEME_ANALYSIS_PROMPT,
-    convert_to_frontend_format as convert_story_theme_to_frontend
+    convert_to_frontend_format as convert_story_theme_to_frontend,
+    extract_abstract_layer as extract_story_theme_abstract
 )
 
 from .narrative_extraction import (
@@ -20,6 +21,7 @@ __all__ = [
     # Story Theme (Pillar I)
     "STORY_THEME_ANALYSIS_PROMPT",
     "convert_story_theme_to_frontend",
+    "extract_story_theme_abstract",
     # Narrative Template (Pillar II)
     "NARRATIVE_EXTRACTION_PROMPT",
     "convert_narrative_to_frontend",
