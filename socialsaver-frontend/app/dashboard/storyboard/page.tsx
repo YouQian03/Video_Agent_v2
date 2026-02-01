@@ -13,7 +13,7 @@ import type { RemixAnalysisResult, StoryboardShot } from "@/lib/types/remix"
 import { saveStoryboardToLibrary } from "@/lib/asset-storage"
 
 // 🔌 Real API Integration
-import { uploadVideo, getStoryboard, getAssetUrl } from "@/lib/api"
+import { uploadVideo, getStoryboard, getStoryTheme, getAssetUrl } from "@/lib/api"
 
 type AnalysisStep = "upload" | "analyzing" | "results"
 
@@ -277,9 +277,28 @@ export default function StoryboardAnalysisPage() {
       // Calculate total duration
       const totalDuration = processedStoryboard.reduce((sum, s) => sum + s.durationSeconds, 0)
 
-      // Create analysis result with real storyboard + mock theme/script
+      // 🔌 Fetch real Story Theme from Film IR API (with retry)
+      let storyThemeData = null
+      let storyThemeRetries = 0
+      const maxStoryThemeRetries = 30 // Max 1.5 minutes for Story Theme analysis
+
+      while (storyThemeRetries < maxStoryThemeRetries) {
+        try {
+          storyThemeData = await getStoryTheme(uploadResult.job_id)
+          if (storyThemeData) {
+            console.log("✅ Story Theme received from API")
+            break
+          }
+        } catch (e) {
+          // Story Theme still processing, continue polling
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        storyThemeRetries++
+      }
+
+      // Create analysis result with real data (fallback to mock if Story Theme not ready)
       const realAnalysisResult: RemixAnalysisResult = {
-        storyTheme: {
+        storyTheme: storyThemeData || {
           ...mockAnalysisResult.storyTheme,
           basicInfo: {
             ...mockAnalysisResult.storyTheme.basicInfo,

@@ -221,6 +221,23 @@ export function getAssetUrl(jobId: string, assetPath: string): string {
 }
 
 /**
+ * 获取 Film IR Story Theme 分析结果
+ */
+export async function getStoryTheme(jobId: string): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/film_ir/story_theme`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return null; // Story theme not ready yet
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch story theme" }));
+    throw new Error(error.detail || "Failed to fetch story theme");
+  }
+
+  return response.json();
+}
+
+/**
  * 轮询作业状态直到完成
  */
 export async function pollJobStatus(

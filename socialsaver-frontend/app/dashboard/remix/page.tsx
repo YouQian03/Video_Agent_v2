@@ -28,6 +28,7 @@ import type {
 import {
   uploadVideo,
   getStoryboard,
+  getStoryTheme,
   getJobStatus,
   sendAgentChat,
   runTask,
@@ -545,11 +546,31 @@ export default function RemixPage() {
 
       setRealStoryboard({ ...storyboardData, storyboard: processedStoryboard })
 
-      // Convert to RemixAnalysisResult format (using real storyboard + mock theme/script for now)
-      // TODO: Replace with real Story Theme and Script Analysis when prompts are ready
+      // Calculate total duration
       const totalDuration = processedStoryboard.reduce((sum, s) => sum + s.durationSeconds, 0)
+
+      // 🔌 Fetch real Story Theme from Film IR API (with retry)
+      let storyThemeData = null
+      let storyThemeRetries = 0
+      const maxStoryThemeRetries = 30 // Max 1.5 minutes for Story Theme analysis
+
+      while (storyThemeRetries < maxStoryThemeRetries) {
+        try {
+          storyThemeData = await getStoryTheme(uploadResult.job_id)
+          if (storyThemeData) {
+            console.log("✅ Story Theme received from API")
+            break
+          }
+        } catch (e) {
+          // Story Theme still processing, continue polling
+        }
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        storyThemeRetries++
+      }
+
+      // Convert to RemixAnalysisResult format (use real Story Theme if available)
       const realAnalysisResult: RemixAnalysisResult = {
-        storyTheme: {
+        storyTheme: storyThemeData || {
           ...mockAnalysisResult.storyTheme,
           basicInfo: {
             ...mockAnalysisResult.storyTheme.basicInfo,
