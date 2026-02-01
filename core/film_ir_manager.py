@@ -33,7 +33,11 @@ from core.film_ir_io import (
 )
 from core.meta_prompts import (
     STORY_THEME_ANALYSIS_PROMPT,
-    convert_story_theme_to_frontend
+    convert_story_theme_to_frontend,
+    NARRATIVE_EXTRACTION_PROMPT,
+    convert_narrative_to_frontend,
+    extract_narrative_abstract,
+    extract_narrative_hidden_assets
 )
 
 
@@ -236,9 +240,29 @@ class FilmIRManager:
             return {"status": "error", "reason": f"Story Theme analysis failed: {e}"}
 
         # ============================================================
-        # Step 2: Narrative Extraction (支柱 II) - 待接入
+        # Step 2: Narrative Extraction (支柱 II) - Concrete + Abstract 融合输出
         # ============================================================
-        print(f"📝 [Stage 1.2] Narrative Extraction - waiting for Meta Prompt")
+        print(f"📝 [Stage 1.2] Extracting Narrative Template...")
+
+        try:
+            narrative_result = self._analyze_narrative(video_path)
+            if narrative_result:
+                # 提取三层数据
+                concrete_data = convert_narrative_to_frontend(narrative_result)
+                abstract_data = extract_narrative_abstract(narrative_result)
+                hidden_assets = extract_narrative_hidden_assets(narrative_result)
+
+                # 存储到支柱 II
+                self.ir["pillars"]["II_narrativeTemplate"]["concrete"] = concrete_data
+                self.ir["pillars"]["II_narrativeTemplate"]["abstract"] = abstract_data
+                self.ir["pillars"]["II_narrativeTemplate"]["hiddenAssets"] = hidden_assets
+                self.save()
+                print(f"✅ [Stage 1.2] Narrative extraction completed (concrete + abstract + hiddenAssets)")
+            else:
+                print(f"⚠️ [Stage 1.2] Narrative extraction returned empty result")
+        except Exception as e:
+            print(f"❌ [Stage 1.2] Narrative extraction failed: {e}")
+            # 不阻塞流程，继续执行
 
         # ============================================================
         # Step 3: Shot Decomposition (支柱 III) - 已在初始化时完成基础版本
@@ -299,6 +323,64 @@ class FilmIRManager:
         try:
             result = json.loads(response.text)
             print(f"✅ Story Theme analysis received")
+            return result
+        except json.JSONDecodeError as e:
+            print(f"❌ Failed to parse JSON response: {e}")
+            print(f"Raw response: {response.text[:500]}...")
+            raise
+
+    def _analyze_narrative(self, video_path: Path) -> Optional[Dict[str, Any]]:
+        """
+        调用 Gemini API 提取叙事模板 (Concrete + Abstract 融合输出)
+
+        Args:
+            video_path: 视频文件路径
+
+        Returns:
+            AI 分析结果，包含 narrativeTemplate.*.concrete 和 *.abstract
+        """
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+
+        client = genai.Client(api_key=api_key)
+
+        # 上传视频文件 (如果已上传则复用)
+        print(f"📤 Uploading video to Gemini for Narrative analysis...")
+        uploaded_file = client.files.upload(file=str(video_path))
+
+        # 等待文件处理完成
+        import time
+        while uploaded_file.state.name == "PROCESSING":
+            print(f"⏳ Waiting for video processing...")
+            time.sleep(3)
+            uploaded_file = client.files.get(name=uploaded_file.name)
+
+        if uploaded_file.state.name != "ACTIVE":
+            raise RuntimeError(f"Video processing failed: {uploaded_file.state.name}")
+
+        print(f"✅ Video ready for Narrative analysis")
+
+        # 构建 Prompt
+        prompt = NARRATIVE_EXTRACTION_PROMPT.replace(
+            "{input_content}",
+            "[Video file attached - analyze the narrative structure, characters, and story arc]"
+        )
+
+        # 调用 Gemini API
+        print(f"🤖 Calling Gemini API for Narrative extraction...")
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt, uploaded_file],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+
+        # 解析 JSON 响应
+        try:
+            result = json.loads(response.text)
+            print(f"✅ Narrative extraction received")
             return result
         except json.JSONDecodeError as e:
             print(f"❌ Failed to parse JSON response: {e}")

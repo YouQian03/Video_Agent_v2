@@ -249,11 +249,19 @@ class NarrativeTemplateAbstract(TypedDict):
     rhythmSignature: str  # 节奏特征
 
 
+class HiddenAssets(TypedDict):
+    """隐藏资产 - 用于 Stage 3 资产生成"""
+    protagonist_detail: str  # 主角详细描述 (80-120 words)
+    antagonist_detail: str  # 对手详细描述 (50-80 words)
+    props_detail: str  # 关键道具描述
+
+
 class NarrativeTemplatePillar(TypedDict):
     """支柱 II 完整结构"""
     concrete: Optional[NarrativeTemplateConcrete]
     abstract: Optional[NarrativeTemplateAbstract]
     remixed: Optional[NarrativeTemplateConcrete]
+    hiddenAssets: Optional[HiddenAssets]  # 隐藏资产，不显示在前端表格
 
 
 # ============================================================
@@ -569,7 +577,8 @@ def create_empty_film_ir(job_id: str, source_video: str = "") -> Dict[str, Any]:
             "II_narrativeTemplate": {
                 "concrete": None,
                 "abstract": None,
-                "remixed": None
+                "remixed": None,
+                "hiddenAssets": None
             },
             "III_shotRecipe": {
                 "concrete": None,

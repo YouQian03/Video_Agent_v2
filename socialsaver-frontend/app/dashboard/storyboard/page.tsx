@@ -13,7 +13,7 @@ import type { RemixAnalysisResult, StoryboardShot } from "@/lib/types/remix"
 import { saveStoryboardToLibrary } from "@/lib/asset-storage"
 
 // 🔌 Real API Integration
-import { uploadVideo, getStoryboard, getStoryTheme, getAssetUrl } from "@/lib/api"
+import { uploadVideo, getStoryboard, getStoryTheme, getScriptAnalysis, getAssetUrl } from "@/lib/api"
 
 type AnalysisStep = "upload" | "analyzing" | "results"
 
@@ -277,26 +277,41 @@ export default function StoryboardAnalysisPage() {
       // Calculate total duration
       const totalDuration = processedStoryboard.reduce((sum, s) => sum + s.durationSeconds, 0)
 
-      // 🔌 Fetch real Story Theme from Film IR API (with retry)
+      // 🔌 Fetch real Story Theme and Script Analysis from Film IR API (with retry)
       let storyThemeData = null
-      let storyThemeRetries = 0
-      const maxStoryThemeRetries = 30 // Max 1.5 minutes for Story Theme analysis
+      let scriptAnalysisData = null
+      let retries = 0
+      const maxRetries = 40 // Max 2 minutes for both analyses
 
-      while (storyThemeRetries < maxStoryThemeRetries) {
+      while (retries < maxRetries) {
         try {
-          storyThemeData = await getStoryTheme(uploadResult.job_id)
-          if (storyThemeData) {
+          // Fetch both in parallel
+          const [themeResult, scriptResult] = await Promise.all([
+            storyThemeData ? Promise.resolve(storyThemeData) : getStoryTheme(uploadResult.job_id),
+            scriptAnalysisData ? Promise.resolve(scriptAnalysisData) : getScriptAnalysis(uploadResult.job_id)
+          ])
+
+          if (themeResult && !storyThemeData) {
+            storyThemeData = themeResult
             console.log("✅ Story Theme received from API")
+          }
+          if (scriptResult && !scriptAnalysisData) {
+            scriptAnalysisData = scriptResult
+            console.log("✅ Script Analysis received from API")
+          }
+
+          // Break if both are ready
+          if (storyThemeData && scriptAnalysisData) {
             break
           }
         } catch (e) {
-          // Story Theme still processing, continue polling
+          // Still processing, continue polling
         }
         await new Promise((resolve) => setTimeout(resolve, 3000))
-        storyThemeRetries++
+        retries++
       }
 
-      // Create analysis result with real data (fallback to mock if Story Theme not ready)
+      // Create analysis result with real data (fallback to mock if not ready)
       const realAnalysisResult: RemixAnalysisResult = {
         storyTheme: storyThemeData || {
           ...mockAnalysisResult.storyTheme,
@@ -306,7 +321,7 @@ export default function StoryboardAnalysisPage() {
             duration: `${Math.round(totalDuration)}s`,
           },
         },
-        scriptAnalysis: mockAnalysisResult.scriptAnalysis,
+        scriptAnalysis: scriptAnalysisData || mockAnalysisResult.scriptAnalysis,
         storyboard: processedStoryboard,
       }
 

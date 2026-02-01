@@ -238,6 +238,23 @@ export async function getStoryTheme(jobId: string): Promise<any> {
 }
 
 /**
+ * 获取 Film IR Narrative/Script Analysis 分析结果
+ */
+export async function getScriptAnalysis(jobId: string): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/film_ir/narrative`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return null; // Script analysis not ready yet
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch script analysis" }));
+    throw new Error(error.detail || "Failed to fetch script analysis");
+  }
+
+  return response.json();
+}
+
+/**
  * 轮询作业状态直到完成
  */
 export async function pollJobStatus(
