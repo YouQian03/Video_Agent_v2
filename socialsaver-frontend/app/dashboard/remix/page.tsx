@@ -41,6 +41,8 @@ import {
   getRemixDiff,
   getRemixPrompts,
   generateRemixStoryboard,
+  finalizeStoryboard,
+  generateVideosBatch,
   type SocialSaverStoryboard,
   type CharacterEntity,
   type EnvironmentEntity,
@@ -942,75 +944,101 @@ export default function RemixPage() {
 
     try {
       // Get the shots from the storyboard
-      const shots = realStoryboard?.storyboard || analysisResult?.storyboard || []
+      const shots: StoryboardShot[] = (finalStoryboard && finalStoryboard.length > 0)
+        ? finalStoryboard
+        : (realStoryboard?.storyboard || analysisResult?.storyboard || [])
       const totalShots = shots.length
 
-      // 🎨 Stage 1: Stylize all shots
+      // 🔒 Stage 0: Finalize storyboard data - 确保 Film IR 包含最新数据
       setGenerationProgress({
         stage: "stylizing",
         currentShot: 0,
         totalShots,
-        message: "Generating style frames with AI..."
+        message: "Syncing storyboard data..."
       })
 
-      for (let i = 0; i < totalShots; i++) {
-        const shotId = `shot_${String(i + 1).padStart(2, "0")}`
-        setGenerationProgress({
-          stage: "stylizing",
-          currentShot: i + 1,
-          totalShots,
-          message: `Stylizing shot ${i + 1} of ${totalShots}...`
-        })
+      // 将 StoryboardShot 转换为 RemixStoryboardShot 格式
+      const remixShots: RemixStoryboardShot[] = shots.map((shot, idx) => ({
+        shotNumber: shot.shotNumber || idx + 1,
+        shotId: `shot_${String(shot.shotNumber || idx + 1).padStart(2, "0")}`,
+        firstFrameImage: shot.firstFrameImage || "",
+        visualDescription: shot.visualDescription || "",
+        contentDescription: shot.contentDescription || "",
+        startSeconds: shot.startSeconds || 0,
+        endSeconds: shot.endSeconds || 0,
+        durationSeconds: shot.durationSeconds || 3,
+        shotSize: shot.shotSize || "MEDIUM",
+        cameraAngle: shot.cameraAngle || "eye-level",
+        cameraMovement: shot.cameraMovement || "static",
+        focalLengthDepth: shot.focalLengthDepth || "",
+        lighting: shot.lighting || "",
+        music: shot.music || "",
+        dialogueVoiceover: shot.dialogueVoiceover || "",
+        i2vPrompt: shot.visualDescription || "",
+        appliedAnchors: { characters: [], environments: [] },
+      }))
 
-        try {
-          await runTask("stylize", currentJobId, shotId)
-        } catch (e) {
-          console.warn(`Stylize shot ${shotId} failed, continuing...`, e)
-        }
+      console.log("🔒 [Finalize] Syncing storyboard to Film IR...")
+      const finalizeResult = await finalizeStoryboard(currentJobId, remixShots)
+      console.log("✅ [Finalize] Result:", finalizeResult)
+
+      if (!finalizeResult.readyForVideo) {
+        console.warn("⚠️ [Finalize] Missing frames:", finalizeResult.missingFrames)
       }
 
-      // 🎬 Stage 2: Generate videos for all shots (async - need to poll)
+      // 🎨 Stage 1: Skip stylize for Remix flow (we use storyboard_frames instead)
+      // storyboard_frames 已经在 Generate Storyboard 步骤中生成
+      // 这些图包含了 Identity Anchor 的特征，是视频生成的第0帧
+      console.log("📸 [Video Gen] Using storyboard_frames as first frame (skip stylize)")
+
+      // 🎬 Stage 2: Generate videos for all shots (串行执行，避免 RPM 限流)
       setGenerationProgress({
         stage: "generating",
         currentShot: 0,
         totalShots,
-        message: "Starting video generation..."
+        message: "Starting serial video generation (30s cooling between shots)..."
       })
 
-      // Trigger video generation for all shots
-      for (let i = 0; i < totalShots; i++) {
-        const shotId = `shot_${String(i + 1).padStart(2, "0")}`
-        try {
-          await runTask("video_generate", currentJobId, shotId)
-        } catch (e) {
-          console.warn(`Video generate trigger for ${shotId} failed`, e)
-        }
-      }
+      // 🚀 使用批量串行 API，避免并发轰炸 Veo
+      console.log("🎬 [Video Gen] Triggering batch serial video generation...")
+      await generateVideosBatch(currentJobId)
 
       // Poll for video generation completion
+      // 串行模式下每个 shot 需要 ~3-5 分钟 + 30s 冷却，所以需要更长的轮询时间
       let pollAttempts = 0
-      const maxPollAttempts = 120 // 10 minutes max (120 * 5s)
+      const maxPollAttempts = 300 // 25 minutes max (300 * 5s) - 串行模式需要更长时间
       let finalVideoCount = 0
 
       while (pollAttempts < maxPollAttempts) {
         const status = await getJobStatus(currentJobId)
         finalVideoCount = status.videoGeneratedCount
 
+        // 检查是否被熔断暂停
+        const isPaused = status.globalStages?.video_gen === "PAUSED"
+
         setGenerationProgress({
           stage: "generating",
           currentShot: status.videoGeneratedCount,
           totalShots: status.totalShots,
-          message: `Generating videos: ${status.videoGeneratedCount} of ${status.totalShots} complete...`
+          message: isPaused
+            ? `⚠️ Generation paused (API limit). ${status.videoGeneratedCount} of ${status.totalShots} complete.`
+            : `Generating videos (serial): ${status.videoGeneratedCount} of ${status.totalShots} complete...`
         })
 
-        // Check if all videos are generated
+        // 检查是否完成或被暂停
         if (status.videoGeneratedCount >= status.totalShots) {
+          break
+        }
+
+        // 检查是否被熔断暂停
+        if (isPaused) {
+          console.warn(`🛑 Video generation paused due to API limits. ${status.videoGeneratedCount}/${status.totalShots} completed.`)
           break
         }
 
         // Check if there are still running tasks
         if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots) {
-          // No running tasks but not all videos done - some might have failed (e.g., quota exceeded)
+          // No running tasks but not all videos done - some might have failed
           console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
           break
         }

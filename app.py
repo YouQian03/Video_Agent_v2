@@ -486,9 +486,147 @@ async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: O
 
     if node_type not in ["stylize", "video_generate"]:
         raise HTTPException(status_code=400, detail="Invalid node type")
-    
+
     background_tasks.add_task(manager.run_node, node_type, shot_id)
     return {"status": "started", "job_id": manager.job_id}
+
+
+# ============================================================
+# 串行批量视频生成 API (防止 Veo RPM 限流)
+# ============================================================
+
+def _run_batch_video_generation_serial(job_id: str):
+    """
+    串行执行所有 shot 的视频生成，带冷却间隔和随机抖动
+
+    策略：
+    1. 彻底串行化 - 一个接一个执行
+    2. 冷却时间 - 每个 shot 之间等待 30 秒
+    3. 随机抖动重试 - 429 错误时增加 5-15 秒随机延迟
+    4. 失败熔断 - 连续 3 次失败后暂停整个任务链
+    """
+    import time
+    import random
+    from core.runner import veo_generate_video, save_workflow, load_workflow
+
+    job_dir = Path("jobs") / job_id
+    wf = load_workflow(job_dir)
+
+    shots = wf.get("shots", [])
+    total_shots = len(shots)
+    success_count = 0
+    consecutive_failures = 0
+    max_consecutive_failures = 3
+
+    # 冷却时间配置
+    INTER_SHOT_BUFFER = 30  # 每个 shot 之间等待 30 秒
+    JITTER_MIN = 5  # 随机抖动最小值
+    JITTER_MAX = 15  # 随机抖动最大值
+
+    print(f"🎬 [Batch Video Gen] 开始串行生成 {total_shots} 个分镜视频...")
+    print(f"⚙️ [Config] 冷却间隔: {INTER_SHOT_BUFFER}s, 抖动范围: {JITTER_MIN}-{JITTER_MAX}s")
+
+    # 更新全局状态
+    if "global_stages" not in wf:
+        wf["global_stages"] = {
+            "analyze": "SUCCESS", "extract": "SUCCESS",
+            "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
+        }
+    wf["global_stages"]["video_gen"] = "RUNNING"
+    save_workflow(job_dir, wf)
+
+    for idx, shot in enumerate(shots):
+        shot_id = shot.get("shot_id")
+
+        # 🔄 冷却间隔（第一个 shot 除外）
+        if idx > 0:
+            jitter = random.uniform(JITTER_MIN, JITTER_MAX)
+            wait_time = INTER_SHOT_BUFFER + jitter
+            print(f"⏳ [Cooling] 等待 {wait_time:.1f}s 后处理 {shot_id} (冷却 {INTER_SHOT_BUFFER}s + 抖动 {jitter:.1f}s)")
+            time.sleep(wait_time)
+
+        print(f"\n{'='*60}")
+        print(f"🎬 [Shot {idx + 1}/{total_shots}] 开始处理: {shot_id}")
+        print(f"{'='*60}")
+
+        # 更新 shot 状态
+        shot.setdefault("status", {})["video_generate"] = "RUNNING"
+        save_workflow(job_dir, wf)
+
+        try:
+            video_model = wf.get("global", {}).get("video_model", "veo")
+
+            if video_model == "veo":
+                rel_video_path = veo_generate_video(job_dir, wf, shot)
+            else:
+                # Mock 模式快速测试
+                from core.runner import mock_generate_video
+                rel_video_path = mock_generate_video(job_dir, shot)
+
+            shot.setdefault("assets", {})["video"] = rel_video_path
+            shot["status"]["video_generate"] = "SUCCESS"
+            success_count += 1
+            consecutive_failures = 0  # 重置连续失败计数
+            print(f"✅ [Shot {idx + 1}/{total_shots}] {shot_id} 视频生成成功！")
+
+        except Exception as e:
+            error_str = str(e)
+            shot["status"]["video_generate"] = "FAILED"
+            shot.setdefault("errors", {})["video_generate"] = error_str
+            consecutive_failures += 1
+
+            print(f"❌ [Shot {idx + 1}/{total_shots}] {shot_id} 失败: {error_str[:100]}")
+
+            # 🛑 熔断机制：连续失败 3 次后暂停
+            if consecutive_failures >= max_consecutive_failures:
+                print(f"\n🛑 [Circuit Breaker] 连续 {max_consecutive_failures} 次失败，暂停任务链")
+                print(f"💡 建议：检查 API Quota 或稍后再试")
+                wf["global_stages"]["video_gen"] = "PAUSED"
+                save_workflow(job_dir, wf)
+                break
+
+        save_workflow(job_dir, wf)
+
+    # 最终状态更新
+    wf = load_workflow(job_dir)  # 重新加载确保最新
+    if wf["global_stages"].get("video_gen") != "PAUSED":
+        if success_count == total_shots:
+            wf["global_stages"]["video_gen"] = "SUCCESS"
+        elif success_count > 0:
+            wf["global_stages"]["video_gen"] = "PARTIAL"
+        else:
+            wf["global_stages"]["video_gen"] = "FAILED"
+
+    save_workflow(job_dir, wf)
+
+    print(f"\n{'='*60}")
+    print(f"🏁 [Batch Complete] 总计: {total_shots}, 成功: {success_count}, 失败: {total_shots - success_count}")
+    print(f"{'='*60}")
+
+
+@app.post("/api/job/{job_id}/generate-videos-batch")
+async def generate_videos_batch(job_id: str, background_tasks: BackgroundTasks):
+    """
+    批量串行生成所有分镜视频
+
+    特性：
+    - 串行执行：一个接一个，避免并发轰炸
+    - 冷却间隔：每个 shot 之间等待 30 秒
+    - 随机抖动：重试时增加 5-15 秒随机延迟
+    - 熔断机制：连续 3 次失败后暂停
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    # 在后台串行执行
+    background_tasks.add_task(_run_batch_video_generation_serial, job_id)
+
+    return {
+        "status": "started",
+        "message": "Video generation started in serial mode (30s cooling between shots)",
+        "job_id": job_id
+    }
 
 
 # ============================================================
@@ -788,7 +926,7 @@ def generate_storyboard_frame(
     visual_style: dict
 ) -> str:
     """
-    使用 Gemini 生成分镜首帧图片
+    使用 Gemini 生成分镜首帧图片（基于原始帧进行编辑，保持构图一致性）
 
     Args:
         job_dir: Job 目录
@@ -803,6 +941,7 @@ def generate_storyboard_frame(
         生成图片的 URL 路径
     """
     import io
+    import base64
     from PIL import Image
     from google import genai
     from google.genai import types
@@ -811,53 +950,43 @@ def generate_storyboard_frame(
     storyboard_dir = job_dir / "storyboard_frames"
     storyboard_dir.mkdir(exist_ok=True)
 
-    # 构建完整的 prompt
-    prompt_parts = []
+    # 🎯 查找原始帧作为参考（保持构图一致性的关键）
+    original_frame_path = job_dir / "frames" / f"{shot_id}.png"
+    has_reference = original_frame_path.exists()
 
-    # 1. 主 T2I prompt
-    if t2i_prompt:
-        prompt_parts.append(t2i_prompt)
+    # 构建修改指令（而不是完整描述）
+    modification_parts = []
 
-    # 2. 添加应用的角色锚点描述
+    # 1. 收集角色修改描述
     char_ids = applied_anchors.get("characters", [])
+    char_descs = []
     if char_ids and identity_anchors.get("characters"):
-        char_descs = []
         for char in identity_anchors["characters"]:
             if char.get("anchorId") in char_ids:
                 desc = char.get("detailedDescription", "")
                 if desc:
-                    char_descs.append(desc[:200])  # 限制长度
-        if char_descs:
-            prompt_parts.append(f"Characters: {'; '.join(char_descs)}")
+                    char_descs.append(desc[:300])
+                    print(f"   🔗 [Anchor] Applied character: {char.get('anchorId')} -> {desc[:50]}...")
 
-    # 3. 添加应用的环境锚点描述
+    # 2. 收集环境修改描述
     env_ids = applied_anchors.get("environments", [])
+    env_descs = []
     if env_ids and identity_anchors.get("environments"):
-        env_descs = []
         for env in identity_anchors["environments"]:
             if env.get("anchorId") in env_ids:
                 desc = env.get("detailedDescription", "")
                 if desc:
-                    env_descs.append(desc[:200])
-        if env_descs:
-            prompt_parts.append(f"Environment: {'; '.join(env_descs)}")
+                    env_descs.append(desc[:300])
+                    print(f"   🔗 [Anchor] Applied environment: {env.get('anchorId')} -> {desc[:50]}...")
 
-    # 4. 添加视觉风格
+    # 3. 收集视觉风格
     style_parts = []
     if visual_style.get("artStyle"):
-        style_parts.append(f"Art style: {visual_style['artStyle']}")
+        style_parts.append(visual_style['artStyle'])
     if visual_style.get("colorPalette"):
-        style_parts.append(f"Color palette: {visual_style['colorPalette']}")
+        style_parts.append(visual_style['colorPalette'])
     if visual_style.get("lightingMood"):
-        style_parts.append(f"Lighting: {visual_style['lightingMood']}")
-    if style_parts:
-        prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
-
-    # 5. 添加技术要求
-    prompt_parts.append("High quality, cinematic composition, detailed, 16:9 aspect ratio, single image")
-
-    final_prompt = ". ".join(prompt_parts)
-    print(f"🎨 [Storyboard] Generating {shot_id} with prompt: {final_prompt[:100]}...")
+        style_parts.append(visual_style['lightingMood'])
 
     try:
         import concurrent.futures
@@ -869,22 +998,84 @@ def generate_storyboard_frame(
 
         client = genai.Client(api_key=api_key)
 
-        # 使用 ThreadPoolExecutor 添加超时机制，防止 API 无限阻塞
-        def call_gemini():
-            # 使用 gemini-2.5-flash-image 图像生成模型
-            return client.models.generate_content(
-                model="gemini-2.5-flash-image",  # Gemini 2.0 Flash Exp
-                contents=[final_prompt],
-            )
+        if has_reference:
+            # ✅ 有参考图：使用图片编辑模式，保持构图一致性
+            print(f"🎨 [Storyboard] Editing {shot_id} with reference image (preserving composition)...")
 
-        TIMEOUT_SECONDS = 120  # 2分钟超时
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(call_gemini)
-            try:
-                response = future.result(timeout=TIMEOUT_SECONDS)
-            except concurrent.futures.TimeoutError:
-                print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
-                return ""
+            # 读取原始帧
+            with open(original_frame_path, "rb") as f:
+                original_image_bytes = f.read()
+
+            # 构建编辑指令（强调保持构图）
+            edit_instructions = []
+            edit_instructions.append("CRITICAL: Maintain EXACT composition, camera angle, framing, and layout from the reference image.")
+            edit_instructions.append("Only modify the specified elements while preserving everything else.")
+
+            if char_descs:
+                edit_instructions.append(f"UPDATE CHARACTERS: {'; '.join(char_descs)}")
+            if env_descs:
+                edit_instructions.append(f"UPDATE ENVIRONMENT: {'; '.join(env_descs)}")
+            if style_parts:
+                edit_instructions.append(f"APPLY STYLE: {', '.join(style_parts)}")
+            if t2i_prompt:
+                edit_instructions.append(f"SCENE CONTEXT: {t2i_prompt}")
+
+            edit_instructions.append("PRESERVE: Original composition, camera angle, subject positions, lighting direction, color palette consistency.")
+            edit_instructions.append("OUTPUT: High quality, cinematic, 16:9 aspect ratio, single image.")
+
+            final_prompt = "\n".join(edit_instructions)
+            print(f"   📝 Edit prompt: {final_prompt[:150]}...")
+
+            def call_gemini_edit():
+                return client.models.generate_content(
+                    model="gemini-2.5-flash-image",
+                    contents=[
+                        types.Part.from_bytes(data=original_image_bytes, mime_type="image/png"),
+                        final_prompt
+                    ],
+                )
+
+            TIMEOUT_SECONDS = 120
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(call_gemini_edit)
+                try:
+                    response = future.result(timeout=TIMEOUT_SECONDS)
+                except concurrent.futures.TimeoutError:
+                    print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
+                    return ""
+
+        else:
+            # ⚠️ 无参考图：纯文本生成（fallback）
+            print(f"🎨 [Storyboard] Generating {shot_id} from text (no reference image)...")
+
+            prompt_parts = []
+            if t2i_prompt:
+                prompt_parts.append(t2i_prompt)
+            if char_descs:
+                prompt_parts.append(f"Characters: {'; '.join(char_descs)}")
+            if env_descs:
+                prompt_parts.append(f"Environment: {'; '.join(env_descs)}")
+            if style_parts:
+                prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
+            prompt_parts.append("High quality, cinematic composition, detailed, 16:9 aspect ratio, single image")
+
+            final_prompt = ". ".join(prompt_parts)
+            print(f"   📝 Text prompt: {final_prompt[:150]}...")
+
+            def call_gemini_text():
+                return client.models.generate_content(
+                    model="gemini-2.5-flash-image",
+                    contents=[final_prompt],
+                )
+
+            TIMEOUT_SECONDS = 120
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(call_gemini_text)
+                try:
+                    response = future.result(timeout=TIMEOUT_SECONDS)
+                except concurrent.futures.TimeoutError:
+                    print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
+                    return ""
 
         # 提取生成的图片
         for part in response.candidates[0].content.parts:
@@ -937,7 +1128,16 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
         # ===== 使用 remixedLayer 数据并生成新的分镜图 =====
         print(f"🎬 [Storyboard] Generating storyboard frames using remixed data...")
 
-        identity_anchors = remixed_layer.get("identityAnchors", {})
+        # 从 pillars.IV_renderStrategy 读取 identity anchors（Asset Management 写入的位置）
+        # 而不是从 remixedLayer 读取，确保 Asset Management 的修改能够正确应用
+        identity_anchors = render_strategy.get("identityAnchors", {})
+
+        # 🔍 详细调试日志：显示从 Asset Management 读取的角色信息
+        print(f"🔗 [Storyboard] Loading identity anchors from pillars.IV_renderStrategy...")
+        for char in identity_anchors.get("characters", []):
+            anchor_id = char.get("anchorId", "unknown")
+            desc = char.get("detailedDescription", "")[:80]
+            print(f"   📍 Character [{anchor_id}]: {desc}...")
         remixed_shots = remixed_layer.get("shots", [])
 
         for idx, shot in enumerate(remixed_shots):
@@ -1332,9 +1532,10 @@ async def regenerate_storyboard_frames(job_id: str, request: RegenerateFramesReq
     render_strategy = ir_manager.ir.get("pillars", {}).get("IV_renderStrategy", {})
     visual_style = render_strategy.get("visualStyleConfig", {})
 
-    # 获取 identity anchors
-    remixed_layer = ir_manager.get_remixed_layer()
-    identity_anchors = remixed_layer.get("identityAnchors", {}) if remixed_layer else {}
+    # 从 pillars.IV_renderStrategy 读取 identity anchors（Asset Management 写入的位置）
+    identity_anchors = render_strategy.get("identityAnchors", {})
+    char_ids = [c.get("anchorId") for c in identity_anchors.get("characters", [])]
+    print(f"🔗 [Regenerate] Loaded identity anchors from pillars.IV_renderStrategy: {char_ids}")
 
     regenerated_shots = []
 
@@ -1384,6 +1585,112 @@ async def regenerate_storyboard_frames(job_id: str, request: RegenerateFramesReq
         "regeneratedShots": regenerated_shots,
         "count": len(regenerated_shots)
     }
+
+
+# ============================================================
+# Storyboard Finalize API - 视频生成前的最终确认
+# ============================================================
+
+class FinalizeStoryboardRequest(BaseModel):
+    storyboard: List[Dict[str, Any]]  # 最终确认的分镜数据
+
+
+@app.post("/api/job/{job_id}/storyboard/finalize")
+async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
+    """
+    🎬 视频生成前的最终数据同步
+
+    确保 Film IR 的 remixedLayer 包含所有 Storyboard Chat 的修改：
+    1. 将前端传来的最终 storyboard 数据写入 Film IR
+    2. 验证所有必要的 storyboard_frames 已生成
+    3. 返回准备状态，前端确认后才启动视频生成
+
+    这是数据唯一事实来源的最后一道防线。
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    print(f"🔒 [Finalize] Syncing storyboard data to Film IR for {job_id}")
+
+    try:
+        # 1. 获取当前 remixedLayer
+        remixed_layer = ir_manager.get_remixed_layer() or {}
+
+        # 2. 更新 shots 数据
+        updated_shots = []
+        for shot_data in request.storyboard:
+            shot_id = shot_data.get("shotId", f"shot_{str(shot_data.get('shotNumber', 0)).zfill(2)}")
+
+            # 构建更新后的 shot
+            updated_shot = {
+                "shotId": shot_id,
+                "shotNumber": shot_data.get("shotNumber", 0),
+                "I2V_VideoGen": shot_data.get("i2vPrompt", "") or shot_data.get("visualDescription", ""),
+                "visualDescription": shot_data.get("visualDescription", ""),
+                "contentDescription": shot_data.get("contentDescription", ""),
+                "action": shot_data.get("action", ""),
+                "motionDescription": shot_data.get("motionDescription", ""),
+                "startTime": shot_data.get("startSeconds", 0),
+                "endTime": shot_data.get("endSeconds", 0),
+                "durationSeconds": shot_data.get("durationSeconds", 3),
+                "cameraPreserved": {
+                    "shotSize": shot_data.get("shotSize", "MEDIUM"),
+                    "cameraAngle": shot_data.get("cameraAngle", "eye-level"),
+                    "cameraMovement": shot_data.get("cameraMovement", "static"),
+                },
+                "appliedAnchors": shot_data.get("appliedAnchors", {"characters": [], "environments": []}),
+            }
+            updated_shots.append(updated_shot)
+
+        # 3. 更新 remixedLayer
+        remixed_layer["shots"] = updated_shots
+
+        # 4. 保存回 Film IR
+        ir_manager.ir["userIntent"] = ir_manager.ir.get("userIntent", {})
+        ir_manager.ir["userIntent"]["remixedLayer"] = remixed_layer
+        ir_manager.save()
+
+        print(f"✅ [Finalize] Saved {len(updated_shots)} shots to Film IR")
+
+        # 5. 验证 storyboard_frames 是否存在
+        storyboard_frames_dir = job_dir / "storyboard_frames"
+        frames_status = []
+        missing_frames = []
+
+        for shot in updated_shots:
+            shot_id = shot["shotId"]
+            frame_path = storyboard_frames_dir / f"{shot_id}.png"
+            frame_exists = frame_path.exists()
+            frames_status.append({
+                "shotId": shot_id,
+                "frameExists": frame_exists,
+                "framePath": str(frame_path) if frame_exists else None
+            })
+            if not frame_exists:
+                missing_frames.append(shot_id)
+
+        # 6. 返回准备状态
+        ready_for_video = len(missing_frames) == 0
+
+        return {
+            "jobId": job_id,
+            "status": "finalized",
+            "shotCount": len(updated_shots),
+            "framesStatus": frames_status,
+            "missingFrames": missing_frames,
+            "readyForVideo": ready_for_video,
+            "message": "All data synced to Film IR. Ready for video generation." if ready_for_video
+                else f"Warning: {len(missing_frames)} frames are missing. Video generation may use fallback images."
+        }
+
+    except Exception as e:
+        print(f"❌ [Finalize] Error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to finalize storyboard: {str(e)}")
 
 
 # ============================================================
@@ -2025,6 +2332,63 @@ def run_entity_generation_background(
 
         # 使用辅助函数保存
         _save_entity_three_views(ir_manager, anchor_id, entity_type, source, new_three_views)
+
+        # 🔗 关键：同步到 identityAnchors（供 storyboard 生成使用）
+        # 无论 source 是 "anchor" 还是 "ledger"，都要确保 identityAnchors 中有该角色
+        if entity_type == "character":
+            identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {
+                "characters": [], "environments": []
+            })
+            if "characters" not in identity_anchors:
+                identity_anchors["characters"] = []
+
+            # 检查是否已存在
+            existing_idx = next(
+                (i for i, a in enumerate(identity_anchors["characters"]) if a.get("anchorId") == anchor_id),
+                None
+            )
+
+            # 构建/更新角色锚点
+            char_anchor = {
+                "anchorId": anchor_id,
+                "originalEntityId": anchor_id,
+                "name": anchor_name,
+                "detailedDescription": detailed_description,
+                "styleAdaptation": style_adaptation,
+                "threeViews": new_three_views,
+                "status": "READY"
+            }
+
+            if existing_idx is not None:
+                identity_anchors["characters"][existing_idx] = char_anchor
+                print(f"   🔄 Updated character in identityAnchors: {anchor_id}")
+            else:
+                identity_anchors["characters"].append(char_anchor)
+                print(f"   ➕ Added character to identityAnchors: {anchor_id}")
+
+            ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"] = identity_anchors
+
+            # 🔗 关键：更新 remixedLayer.shots 的 appliedAnchors
+            # 根据 characterLedger 的 appearsInShots 信息，将角色绑定到对应镜头
+            char_ledger = ir_manager.ir.get("pillars", {}).get("II_narrativeTemplate", {}).get("characterLedger", [])
+            appears_in_shots = []
+            for char in char_ledger:
+                if char.get("entityId") == anchor_id:
+                    appears_in_shots = char.get("appearsInShots", [])
+                    break
+
+            if appears_in_shots:
+                remixed_layer = ir_manager.ir.get("userIntent", {}).get("remixedLayer", {})
+                remixed_shots = remixed_layer.get("shots", [])
+                for shot in remixed_shots:
+                    shot_id = shot.get("shotId", "")
+                    if shot_id in appears_in_shots:
+                        applied = shot.setdefault("appliedAnchors", {"characters": [], "environments": []})
+                        if anchor_id not in applied.get("characters", []):
+                            applied.setdefault("characters", []).append(anchor_id)
+                            print(f"   🔗 Linked {anchor_id} to {shot_id}.appliedAnchors.characters")
+
+            ir_manager.save()
 
         # 更新任务状态
         entity_generation_tasks[task_key] = {

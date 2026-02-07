@@ -920,6 +920,15 @@ class WorkflowManager:
                         s["assets"]["stylized_frame"] = f"stylized_frames/{s['shot_id']}.png"
 
         stage_key = "video_gen" if node_type == "video_generate" else "stylize"
+        # 确保 global_stages 存在
+        if "global_stages" not in self.workflow:
+            self.workflow["global_stages"] = {
+                "analyze": "SUCCESS",
+                "extract": "SUCCESS",
+                "stylize": "NOT_STARTED",
+                "video_gen": "NOT_STARTED",
+                "merge": "NOT_STARTED"
+            }
         self.workflow["global_stages"][stage_key] = "RUNNING"
 
         for s in target_shots:

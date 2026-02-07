@@ -20,14 +20,17 @@ def ensure_videos_dir(job_dir: Path) -> Path:
     return videos_dir
 
 
-def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
+def get_remix_shot_data(job_dir: Path, shot_id: str, force_reload: bool = True) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
     """
-    🎬 获取 Remix 后的分镜数据
+    🎬 获取 Remix 后的分镜数据（强制从磁盘重新读取）
 
     检查 Film IR 是否有 remixed 层，如果有则返回：
     1. remixed i2v prompt 数据
     2. identity anchors (角色/环境锚点)
     3. visual style 配置
+
+    ⚠️ 重要：force_reload=True 确保读取最新的 film_ir.json，
+    以获取 Storyboard Chat 的所有修改。这是数据唯一事实来源。
 
     Returns:
         Tuple of (i2v_prompt_data, identity_anchors, visual_style) or (None, None, None)
@@ -36,7 +39,18 @@ def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Op
         return None, None, None
 
     try:
-        ir = load_film_ir(job_dir)
+        # 🔄 强制从磁盘重新读取，确保获取 Storyboard Chat 的最新修改
+        if force_reload:
+            import json
+            film_ir_path = job_dir / "film_ir.json"
+            if not film_ir_path.exists():
+                return None, None, None
+            with open(film_ir_path, 'r', encoding='utf-8') as f:
+                ir = json.load(f)
+            print(f"🔄 [Remix Data] Force reloaded film_ir.json from disk for {shot_id}")
+        else:
+            ir = load_film_ir(job_dir)
+
         if not ir:
             return None, None, None
 
@@ -44,6 +58,7 @@ def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Op
         remixed = ir.get("userIntent", {}).get("remixedLayer", {})
 
         if not remixed:
+            print(f"⚠️ [Remix Data] No remixedLayer found in userIntent for {shot_id}")
             return None, None, None
 
         # 查找对应的 shot
@@ -55,6 +70,7 @@ def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Op
                 break
 
         if not target_shot:
+            print(f"⚠️ [Remix Data] Shot {shot_id} not found in remixedLayer")
             return None, None, None
 
         # 获取 identity anchors
@@ -64,29 +80,50 @@ def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Op
         render_strategy = ir.get("pillars", {}).get("IV_renderStrategy", {})
         visual_style = render_strategy.get("visualStyleConfig", {})
 
+        # 📋 打印关键数据用于调试
+        i2v_prompt = target_shot.get("I2V_VideoGen", "") or target_shot.get("remixedI2VPrompt", "")
         print(f"🎬 [Remix Data] Found remixed data for {shot_id}")
+        print(f"   📝 I2V Prompt: {i2v_prompt[:80]}..." if i2v_prompt else "   📝 I2V Prompt: (empty)")
+
         return target_shot, identity_anchors, visual_style
 
     except Exception as e:
         print(f"⚠️ [Remix Data] Error loading remix data: {e}")
+        import traceback
+        traceback.print_exc()
         return None, None, None
 
 
 def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style: Dict) -> str:
     """
-    🎨 构建基于 Remix 数据的生成 Prompt
+    🎨 构建基于 Remix 数据的生成 Prompt（增强版）
 
     整合：
-    1. remixed shot 的 i2v prompt
+    1. remixed shot 的 i2v prompt (优先级: I2V_VideoGen > visualDescription > remixedI2VPrompt)
     2. identity anchors 的详细描述
     3. visual style 的风格配置
+    4. 🔗 语义桥梁：确保 Veo 参考第0帧的角色和光照一致性
+    5. 🎬 动作对位：确保用户在 Chat 中修改的动作被准确注入
     """
-    # 基础 prompt - 从 remixed shot 获取
-    base_prompt = remixed_shot.get("remixedI2VPrompt", "") or remixed_shot.get("subject", "")
+    # 🎯 基础 prompt - 优先级获取
+    base_prompt = (
+        remixed_shot.get("I2V_VideoGen", "") or  # Storyboard Chat 修改后的 prompt
+        remixed_shot.get("visualDescription", "") or  # 视觉描述
+        remixed_shot.get("remixedI2VPrompt", "") or  # 旧版 remix prompt
+        remixed_shot.get("subject", "")  # 最后回退
+    )
 
     # 如果有完整的 i2v prompt 结构
     if remixed_shot.get("i2vPrompt"):
-        base_prompt = remixed_shot.get("i2vPrompt", {}).get("prompt", base_prompt)
+        i2v_data = remixed_shot.get("i2vPrompt", {})
+        if isinstance(i2v_data, dict):
+            base_prompt = i2v_data.get("prompt", base_prompt)
+        elif isinstance(i2v_data, str):
+            base_prompt = i2v_data
+
+    # 🎬 提取动作描述（用户可能在 Chat 中修改了动作）
+    action_description = remixed_shot.get("action", "") or remixed_shot.get("motionDescription", "")
+    camera_movement = remixed_shot.get("cameraPreserved", {}).get("cameraMovement", "")
 
     # 构建 identity 描述
     identity_parts = []
@@ -123,16 +160,39 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     if visual_style.get("cameraStyle"):
         style_parts.append(f"Camera: {visual_style['cameraStyle']}")
 
-    # 组合最终 prompt
-    final_prompt = base_prompt
+    # 🔗 组合最终 prompt - 带语义桥梁
+    final_parts = []
 
+    # 1. 基础场景描述
+    if base_prompt:
+        final_parts.append(base_prompt)
+
+    # 2. 🎬 动作对位（如果有用户修改的动作）
+    if action_description:
+        final_parts.append(f"[SPECIFIC ACTION]: {action_description}")
+
+    # 3. 摄影机运动
+    if camera_movement and camera_movement.lower() != "static":
+        final_parts.append(f"[CAMERA MOVEMENT]: {camera_movement}")
+
+    # 4. Identity anchors
     if identity_parts:
-        final_prompt += "\n\n" + "\n".join(identity_parts)
+        final_parts.append("[CHARACTER/ENVIRONMENT DETAILS]")
+        final_parts.extend(identity_parts)
 
+    # 5. Visual style
     if style_parts:
-        final_prompt += "\n\n[VISUAL STYLE]\n" + ", ".join(style_parts)
+        final_parts.append(f"[VISUAL STYLE]: {', '.join(style_parts)}")
 
-    return final_prompt
+    # 6. 🔗 语义桥梁 - Google 生态技巧，确保 Veo 参考第0帧
+    semantic_bridge = (
+        "CRITICAL: Maintaining consistent lighting, character appearance, and fine details "
+        "from the provided reference image. The first frame must match the reference exactly, "
+        "with natural motion flowing from that starting point."
+    )
+    final_parts.append(f"[CONSISTENCY]: {semantic_bridge}")
+
+    return "\n\n".join(final_parts)
 
 
 def get_effective_shot_data(job_dir: Path, wf: dict, shot: dict) -> Tuple[str, dict]:
@@ -375,11 +435,39 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     out_path = videos_dir / f"{shot['shot_id']}.mp4"
     if out_path.exists(): os.remove(out_path)
 
-    img_rel = shot.get("assets", {}).get("stylized_frame") or f"stylized_frames/{shot['shot_id']}.png"
-    img_path = job_dir / img_rel
+    # 🎯 图片来源优先级：storyboard_frames > stylized_frames > original frames
+    # storyboard_frames 是经过 Identity Anchor 加持的'定妆图'，Veo 必须以此为第0帧
+    shot_id = shot['shot_id']
+    img_path = None
 
-    if not img_path.exists():
+    # 优先级 1: storyboard_frames (Remix 流程生成的定妆图)
+    storyboard_frame = job_dir / "storyboard_frames" / f"{shot_id}.png"
+    if storyboard_frame.exists():
+        img_path = storyboard_frame
+        print(f"📸 [Image Source] Using storyboard_frame for {shot_id}")
+
+    # 优先级 2: stylized_frames (旧流程生成的风格化图)
+    if not img_path:
+        stylized_frame = job_dir / "stylized_frames" / f"{shot_id}.png"
+        if stylized_frame.exists():
+            img_path = stylized_frame
+            print(f"📸 [Image Source] Using stylized_frame for {shot_id}")
+
+    # 优先级 3: 从 assets 字段获取
+    if not img_path:
+        img_rel = shot.get("assets", {}).get("storyboard_frame") or shot.get("assets", {}).get("stylized_frame")
+        if img_rel:
+            img_path = job_dir / img_rel
+            if img_path.exists():
+                print(f"📸 [Image Source] Using asset path for {shot_id}: {img_rel}")
+            else:
+                img_path = None
+
+    # 优先级 4: 回退到 AI 生成 stylized_frame
+    if not img_path or not img_path.exists():
+        print(f"⚠️ [Image Source] No pre-generated frame found for {shot_id}, generating stylized frame...")
         ai_stylize_frame(job_dir, wf, shot)
+        img_path = job_dir / "stylized_frames" / f"{shot_id}.png"
 
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
 
@@ -553,8 +641,12 @@ high motion quality, cinematic, professional cinematography"""
             is_rate_limit = "429" in error_str or "rate" in error_str or "quota" in error_str or "resource_exhausted" in error_str
 
             if is_rate_limit and attempt < max_retries - 1:
-                wait_time = retry_wait_seconds * (attempt + 1)  # 递增等待时间
-                print(f"⚠️ 触发 RPM 限制 (429)，等待 {wait_time} 秒后重试 ({attempt + 1}/{max_retries})...")
+                import random
+                # 🎲 随机抖动：基础等待 + 5-15秒随机延迟，打破同步节奏
+                base_wait = retry_wait_seconds * (attempt + 1)
+                jitter = random.uniform(5, 15)
+                wait_time = base_wait + jitter
+                print(f"⚠️ 触发 RPM 限制 (429)，等待 {wait_time:.1f} 秒后重试 (基础 {base_wait}s + 抖动 {jitter:.1f}s) ({attempt + 1}/{max_retries})...")
                 time.sleep(wait_time)
                 continue
             else:

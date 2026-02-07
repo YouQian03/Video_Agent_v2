@@ -182,6 +182,30 @@ export async function runTask(
 }
 
 /**
+ * 批量串行生成视频（防止 Veo RPM 限流）
+ *
+ * 特性：
+ * - 串行执行：一个接一个，避免并发轰炸
+ * - 冷却间隔：每个 shot 之间等待 30 秒
+ * - 随机抖动：重试时增加 5-15 秒随机延迟
+ * - 熔断机制：连续 3 次失败后暂停
+ */
+export async function generateVideosBatch(
+  jobId: string
+): Promise<{ status: string; message: string; job_id: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-videos-batch`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Batch video generation failed" }));
+    throw new Error(error.detail || "Batch video generation failed");
+  }
+
+  return response.json();
+}
+
+/**
  * 更新单个分镜
  */
 export async function updateShot(
@@ -581,7 +605,7 @@ export async function pollAssetGeneration(
   jobId: string,
   onUpdate: (status: AssetGenerationStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 40
+  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟
 ): Promise<AssetGenerationStatusResponse> {
   let attempts = 0;
 
@@ -887,7 +911,7 @@ export async function pollGenerateViewsStatus(
   anchorId: string,
   onUpdate: (status: GenerateViewsStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 40
+  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟，足够生成 3 个视图
 ): Promise<GenerateViewsStatusResponse> {
   let attempts = 0;
 
@@ -1249,7 +1273,7 @@ export async function pollProductGenerationStatus(
   anchorId: string,
   onUpdate: (status: ProductGenerationStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 40
+  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟
 ): Promise<ProductGenerationStatusResponse> {
   let attempts = 0;
 
@@ -1384,6 +1408,51 @@ export async function regenerateStoryboardFrames(
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: "Frame regeneration failed" }));
     throw new Error(error.detail || "Frame regeneration failed");
+  }
+
+  return response.json();
+}
+
+
+// ============================================================
+// Storyboard Finalize API - 视频生成前的最终确认
+// ============================================================
+
+export interface FinalizeStoryboardResponse {
+  jobId: string;
+  status: string;
+  shotCount: number;
+  framesStatus: Array<{
+    shotId: string;
+    frameExists: boolean;
+    framePath: string | null;
+  }>;
+  missingFrames: string[];
+  readyForVideo: boolean;
+  message: string;
+}
+
+/**
+ * 🎬 视频生成前的最终数据同步
+ *
+ * 确保 Film IR 包含所有 Storyboard Chat 的修改
+ * 必须在启动视频生成前调用
+ */
+export async function finalizeStoryboard(
+  jobId: string,
+  storyboard: RemixStoryboardShot[]
+): Promise<FinalizeStoryboardResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/storyboard/finalize`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ storyboard }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Storyboard finalization failed" }));
+    throw new Error(error.detail || "Storyboard finalization failed");
   }
 
   return response.json();
