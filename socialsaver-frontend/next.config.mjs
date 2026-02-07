@@ -12,6 +12,11 @@ const nextConfig = {
         port: '8000',
         pathname: '/assets/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'g3videoagent-production.up.railway.app',
+        pathname: '/assets/**',
+      },
     ],
   },
 }

@@ -18,6 +18,9 @@ from core.agent_engine import AgentEngine
 from core.film_ir_manager import FilmIRManager
 from core.film_ir_io import load_film_ir, film_ir_exists
 
+# Base URL for asset links - use environment variable in production
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
+
 app = FastAPI(title="AI 导演工作台 API / SocialSaver Backend")
 
 
@@ -948,7 +951,7 @@ def _to_asset_url(job_id: str, file_path: Optional[str]) -> Optional[str]:
     # 从完整路径提取文件名
     file_name = Path(file_path).name
     # 返回完整的后端 URL，让前端可以跨域访问
-    return f"http://localhost:8000/assets/{job_id}/assets/{file_name}"
+    return f"{BASE_URL}/assets/{job_id}/assets/{file_name}"
 
 
 # ============================================================
