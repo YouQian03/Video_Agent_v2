@@ -427,10 +427,30 @@ class EnvironmentAnchor(TypedDict):
     status: str
 
 
+class ProductAnchor(TypedDict):
+    """产品锚点"""
+    anchorId: str  # product_001, product_002
+    name: str  # 产品名称
+    description: str  # 产品描述 (用于 AI 生成)
+    threeViews: ThreeViews  # front/side/back URLs
+    status: str  # NOT_STARTED/GENERATING/SUCCESS/FAILED
+
+
+class VisualStyleConfig(TypedDict):
+    """视觉风格配置"""
+    artStyle: str  # 艺术风格 (Realistic, Anime, etc.)
+    colorPalette: str  # 色彩方案 (Warm tones, Cool tones, etc.)
+    lightingMood: str  # 光线氛围 (Natural daylight, Neon, etc.)
+    cameraStyle: str  # 镜头风格 (Dynamic, Static, etc.)
+    referenceImages: List[str]  # 参考图片 URLs
+    confirmed: bool  # 是否已确认
+
+
 class IdentityAnchors(TypedDict):
     """身份锚点集合"""
     characters: List[CharacterAnchor]
     environments: List[EnvironmentAnchor]
+    products: List[ProductAnchor]  # 产品锚点
 
 
 class ModelConfig(TypedDict):
@@ -468,6 +488,7 @@ class RenderStrategyPillar(TypedDict):
     modelConfig: ModelConfig
     generationPipeline: GenerationPipeline
     shotRenderRecipes: List[ShotRenderRecipe]
+    visualStyleConfig: Optional[VisualStyleConfig]  # 用户自定义视觉风格配置
 
 
 # ============================================================

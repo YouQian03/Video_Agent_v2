@@ -27,6 +27,10 @@ class AssetType(Enum):
     ENVIRONMENT_WIDE = "wide"  # Wide shot (全景)
     ENVIRONMENT_DETAIL = "detail"  # Detail view (细节)
     ENVIRONMENT_ALT = "alt"  # Alternative angle (备选角度)
+    # Product three-views
+    PRODUCT_FRONT = "front"
+    PRODUCT_SIDE = "side"
+    PRODUCT_BACK = "back"
 
 
 class AssetStatus(Enum):
@@ -949,3 +953,191 @@ Technical requirements:
                 paths[anchor_id][view] = str(file_path)
 
         return paths
+
+    def _build_product_prompt(
+        self,
+        view: str,
+        description: str,
+        name: str
+    ) -> str:
+        """
+        构建产品视图 prompt
+
+        Args:
+            view: 视图类型 (front/side/back)
+            description: 产品描述
+            name: 产品名称
+        """
+        view_instructions = {
+            "front": "front view, product facing directly toward camera, centered composition",
+            "side": "side profile view, product rotated 90 degrees, same product as reference",
+            "back": "back view, product facing away from camera, showing rear details, same product as reference"
+        }
+
+        prompt = f"""Professional product photography, {view_instructions.get(view, view_instructions['front'])}.
+
+Product: {name}
+{description}
+
+Technical requirements:
+- Clean white/light gray studio background
+- Professional three-point lighting with soft shadows
+- Same lighting setup across all views
+- High detail, sharp focus
+- Product centered in frame
+- No text, no watermarks, no logos
+- Consistent scale and proportions across all views
+- 16:9 widescreen composition
+- E-commerce quality product shot
+- Subtle reflection on surface for premium look
+"""
+        return prompt.strip()
+
+    def generate_product_views(
+        self,
+        product_id: str,
+        name: str,
+        description: str,
+        output_dir: str = None,
+        on_progress: callable = None
+    ) -> Dict[str, Optional[str]]:
+        """
+        生成产品三视图资产
+
+        Args:
+            product_id: 产品 ID (如 product_001)
+            name: 产品名称
+            description: 产品描述
+            output_dir: 输出目录 (如果为 None，使用默认 assets 目录)
+            on_progress: 进度回调
+
+        Returns:
+            {view: file_path} 三视图路径字典
+        """
+        if output_dir:
+            save_dir = Path(output_dir)
+        else:
+            save_dir = self.assets_dir
+
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        results = {}
+        views = ["front", "side", "back"]
+        front_image = None
+
+        for i, view in enumerate(views):
+            self.generation_status[f"{product_id}_{view}"] = AssetStatus.GENERATING
+
+            if on_progress:
+                on_progress(product_id, view, "GENERATING")
+
+            print(f"   📦 Generating {name} - {view} view ({i+1}/3)...")
+
+            # Build prompt
+            prompt = self._build_product_prompt(
+                view=view,
+                description=description,
+                name=name
+            )
+
+            # Prepare reference images
+            refs = []
+            if front_image and view != "front":
+                refs.append(front_image)
+
+            # Generate image
+            image, error = self._generate_image_sync(prompt, refs if refs else None)
+
+            if image and not error:
+                file_name = f"{view}.png"
+                file_path = save_dir / file_name
+                image.save(file_path, "PNG")
+
+                # Save front image for reference
+                if view == "front":
+                    front_image = image
+
+                results[view] = str(file_path)
+                self.generation_status[f"{product_id}_{view}"] = AssetStatus.SUCCESS
+                print(f"   ✅ Saved: {file_path}")
+
+                if on_progress:
+                    on_progress(product_id, view, "SUCCESS", str(file_path))
+            else:
+                results[view] = None
+                self.generation_status[f"{product_id}_{view}"] = AssetStatus.FAILED
+                print(f"   ❌ Failed: {error}")
+
+                if on_progress:
+                    on_progress(product_id, view, "FAILED", None, error)
+
+        return results
+
+
+def generate_product_views_with_imagen(
+    description: str,
+    output_dir: str,
+    name: str = "Product"
+) -> Dict[str, bool]:
+    """
+    独立函数：使用 Imagen 生成产品三视图
+
+    Args:
+        description: 产品描述
+        output_dir: 输出目录
+        name: 产品名称
+
+    Returns:
+        {view: success} 每个视图是否生成成功
+    """
+    # Create a temporary generator
+    generator = AssetGenerator.__new__(AssetGenerator)
+    generator.generation_status = {}
+
+    # Initialize client
+    try:
+        from google import genai
+        from google.genai import types
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable not set")
+
+        generator.client = genai.Client(api_key=api_key)
+        generator.types = types
+    except Exception as e:
+        print(f"❌ Failed to initialize Gemini client: {e}")
+        return {"front": False, "side": False, "back": False}
+
+    # Generate views
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    results = {"front": False, "side": False, "back": False}
+    views = ["front", "side", "back"]
+    front_image = None
+
+    for view in views:
+        print(f"   📦 Generating product - {view} view...")
+
+        prompt = generator._build_product_prompt(
+            view=view,
+            description=description,
+            name=name
+        )
+
+        refs = [front_image] if front_image and view != "front" else None
+        image, error = generator._generate_image_sync(prompt, refs)
+
+        if image and not error:
+            file_path = output_path / f"{view}.png"
+            image.save(file_path, "PNG")
+            results[view] = True
+            print(f"   ✅ Saved: {file_path}")
+
+            if view == "front":
+                front_image = image
+        else:
+            print(f"   ❌ Failed: {error}")
+
+    return results

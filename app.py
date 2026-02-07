@@ -1661,6 +1661,517 @@ async def unbind_asset(job_id: str, entity_id: str):
     }
 
 
+# ============================================================
+# Visual Style API
+# ============================================================
+
+class VisualStyleRequest(BaseModel):
+    artStyle: str = "Realistic"
+    colorPalette: str = "Warm tones with high contrast"
+    lightingMood: str = "Natural daylight"
+    cameraStyle: str = "Dynamic with smooth transitions"
+    confirmed: bool = False
+
+
+@app.get("/api/job/{job_id}/visual-style")
+async def get_visual_style(job_id: str):
+    """
+    获取 Visual Style 配置
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Get visual style config from Pillar IV
+    render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+    visual_style = render_strategy.get("visualStyleConfig", {
+        "artStyle": "Realistic",
+        "colorPalette": "Warm tones with high contrast",
+        "lightingMood": "Natural daylight",
+        "cameraStyle": "Dynamic with smooth transitions",
+        "referenceImages": [],
+        "confirmed": False
+    })
+
+    return visual_style
+
+
+@app.put("/api/job/{job_id}/visual-style")
+async def save_visual_style(job_id: str, request: VisualStyleRequest):
+    """
+    保存 Visual Style 配置
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Get existing config to preserve reference images
+    render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+    existing_config = render_strategy.get("visualStyleConfig", {})
+    existing_images = existing_config.get("referenceImages", [])
+
+    # Update config
+    visual_style_config = {
+        "artStyle": request.artStyle,
+        "colorPalette": request.colorPalette,
+        "lightingMood": request.lightingMood,
+        "cameraStyle": request.cameraStyle,
+        "referenceImages": existing_images,
+        "confirmed": request.confirmed
+    }
+
+    ir_manager.ir["pillars"]["IV_renderStrategy"]["visualStyleConfig"] = visual_style_config
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "visualStyleConfig": visual_style_config
+    }
+
+
+@app.post("/api/job/{job_id}/visual-style/reference")
+async def upload_visual_style_reference(job_id: str, file: UploadFile = File(...)):
+    """
+    上传 Visual Style 参考图片
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    # Create visual_style directory
+    visual_style_dir = job_dir / "visual_style"
+    visual_style_dir.mkdir(exist_ok=True)
+
+    # Generate unique filename
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    ext = Path(file.filename).suffix or ".png"
+    filename = f"reference_{timestamp}{ext}"
+    file_path = visual_style_dir / filename
+
+    # Save file
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Update film_ir.json
+    ir_manager = FilmIRManager(job_id)
+    render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+
+    if "visualStyleConfig" not in render_strategy:
+        render_strategy["visualStyleConfig"] = {
+            "artStyle": "Realistic",
+            "colorPalette": "Warm tones with high contrast",
+            "lightingMood": "Natural daylight",
+            "cameraStyle": "Dynamic with smooth transitions",
+            "referenceImages": [],
+            "confirmed": False
+        }
+
+    # Add to reference images list (store relative path)
+    relative_path = f"visual_style/{filename}"
+    render_strategy["visualStyleConfig"]["referenceImages"].append(relative_path)
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "url": f"/assets/{job_id}/{relative_path}",
+        "index": len(render_strategy["visualStyleConfig"]["referenceImages"]) - 1
+    }
+
+
+@app.delete("/api/job/{job_id}/visual-style/reference/{index}")
+async def delete_visual_style_reference(job_id: str, index: int):
+    """
+    删除 Visual Style 参考图片
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+    render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+    visual_style = render_strategy.get("visualStyleConfig", {})
+    reference_images = visual_style.get("referenceImages", [])
+
+    if index < 0 or index >= len(reference_images):
+        raise HTTPException(status_code=400, detail=f"Invalid index: {index}")
+
+    # Get file path and delete
+    relative_path = reference_images[index]
+    file_path = job_dir / relative_path
+    if file_path.exists():
+        file_path.unlink()
+
+    # Remove from list
+    reference_images.pop(index)
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "message": f"Reference image at index {index} deleted"
+    }
+
+
+# ============================================================
+# Product Three-Views API
+# ============================================================
+
+class CreateProductRequest(BaseModel):
+    name: str = ""
+    description: str = ""
+
+
+class UpdateProductRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+@app.get("/api/job/{job_id}/products")
+async def get_products(job_id: str):
+    """
+    获取所有产品列表
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Get products from identity anchors
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    return {
+        "products": products,
+        "count": len(products)
+    }
+
+
+@app.post("/api/job/{job_id}/products")
+async def create_product(job_id: str, request: CreateProductRequest):
+    """
+    创建新产品
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Ensure identity anchors structure exists
+    if "identityAnchors" not in ir_manager.ir["pillars"]["IV_renderStrategy"]:
+        ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"] = {
+            "characters": [],
+            "environments": [],
+            "products": []
+        }
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+
+    if "products" not in identity_anchors:
+        identity_anchors["products"] = []
+
+    # Generate product ID
+    existing_ids = [p.get("anchorId", "") for p in identity_anchors["products"]]
+    product_num = 1
+    while f"product_{product_num:03d}" in existing_ids:
+        product_num += 1
+    product_id = f"product_{product_num:03d}"
+
+    # Create product
+    new_product = {
+        "anchorId": product_id,
+        "name": request.name or f"Product {product_num}",
+        "description": request.description,
+        "threeViews": {
+            "front": None,
+            "side": None,
+            "back": None
+        },
+        "status": "NOT_STARTED"
+    }
+
+    identity_anchors["products"].append(new_product)
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "product": new_product
+    }
+
+
+@app.put("/api/job/{job_id}/products/{product_id}")
+async def update_product(job_id: str, product_id: str, request: UpdateProductRequest):
+    """
+    更新产品信息
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    # Find product
+    product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+    if product_idx is None:
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
+
+    # Update fields
+    if request.name is not None:
+        products[product_idx]["name"] = request.name
+    if request.description is not None:
+        products[product_idx]["description"] = request.description
+
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "product": products[product_idx]
+    }
+
+
+@app.delete("/api/job/{job_id}/products/{product_id}")
+async def delete_product(job_id: str, product_id: str):
+    """
+    删除产品
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    # Find and remove product
+    product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+    if product_idx is None:
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
+
+    # Delete associated files
+    three_views_dir = job_dir / "three_views" / product_id
+    if three_views_dir.exists():
+        shutil.rmtree(three_views_dir)
+
+    # Remove from list
+    products.pop(product_idx)
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "message": f"Product {product_id} deleted"
+    }
+
+
+@app.post("/api/job/{job_id}/products/{product_id}/upload/{view}")
+async def upload_product_view(job_id: str, product_id: str, view: str, file: UploadFile = File(...)):
+    """
+    上传产品三视图
+    view: front | side | back
+    """
+    if view not in ["front", "side", "back"]:
+        raise HTTPException(status_code=400, detail=f"Invalid view: {view}. Must be front, side, or back.")
+
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    # Find product
+    product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+    if product_idx is None:
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
+
+    # Create directory
+    three_views_dir = job_dir / "three_views" / product_id
+    three_views_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save file
+    ext = Path(file.filename).suffix or ".png"
+    filename = f"{view}{ext}"
+    file_path = three_views_dir / filename
+
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    # Update product
+    relative_path = f"three_views/{product_id}/{filename}"
+    products[product_idx]["threeViews"][view] = relative_path
+
+    # Update status
+    three_views = products[product_idx]["threeViews"]
+    if all([three_views.get("front"), three_views.get("side"), three_views.get("back")]):
+        products[product_idx]["status"] = "SUCCESS"
+
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "url": f"/assets/{job_id}/{relative_path}",
+        "view": view
+    }
+
+
+@app.get("/api/job/{job_id}/products/{product_id}/state")
+async def get_product_state(job_id: str, product_id: str):
+    """
+    获取产品状态（用于轮询生成进度）
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    # Find product
+    product = next((p for p in products if p.get("anchorId") == product_id), None)
+    if product is None:
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
+
+    # Build URLs for three views
+    three_views = product.get("threeViews", {})
+    three_views_with_urls = {}
+    for view_name in ["front", "side", "back"]:
+        path = three_views.get(view_name)
+        if path:
+            three_views_with_urls[view_name] = {
+                "path": path,
+                "url": f"/assets/{job_id}/{path}"
+            }
+        else:
+            three_views_with_urls[view_name] = None
+
+    return {
+        "anchorId": product_id,
+        "name": product.get("name", ""),
+        "description": product.get("description", ""),
+        "status": product.get("status", "NOT_STARTED"),
+        "threeViews": three_views_with_urls
+    }
+
+
+class GenerateProductViewsRequest(BaseModel):
+    force: bool = False
+
+
+@app.post("/api/job/{job_id}/products/{product_id}/generate-views")
+async def generate_product_views(
+    job_id: str,
+    product_id: str,
+    request: GenerateProductViewsRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    AI 生成产品三视图
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+    products = identity_anchors.get("products", [])
+
+    # Find product
+    product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+    if product_idx is None:
+        raise HTTPException(status_code=404, detail=f"Product not found: {product_id}")
+
+    product = products[product_idx]
+
+    # Check if already complete
+    if product.get("status") == "SUCCESS" and not request.force:
+        return {
+            "status": "already_complete",
+            "message": "Product views already generated. Use force=true to regenerate."
+        }
+
+    # Check description
+    if not product.get("description", "").strip():
+        raise HTTPException(status_code=400, detail="Product description is required for AI generation")
+
+    # Set status to generating
+    products[product_idx]["status"] = "GENERATING"
+    ir_manager.save()
+
+    # Run generation in background
+    background_tasks.add_task(
+        run_product_generation_background,
+        job_id,
+        product_id,
+        product.get("description", "")
+    )
+
+    return {
+        "status": "processing",
+        "message": "Product three-views generation started"
+    }
+
+
+def run_product_generation_background(job_id: str, product_id: str, description: str):
+    """
+    后台任务：生成产品三视图
+    """
+    from core.asset_generator import generate_product_views_with_imagen
+
+    job_dir = Path("jobs") / job_id
+    three_views_dir = job_dir / "three_views" / product_id
+    three_views_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Generate three views using Imagen
+        results = generate_product_views_with_imagen(
+            description=description,
+            output_dir=str(three_views_dir)
+        )
+
+        # Update film_ir.json
+        ir_manager = FilmIRManager(job_id)
+        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+        products = identity_anchors.get("products", [])
+
+        product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+        if product_idx is not None:
+            products[product_idx]["threeViews"] = {
+                "front": f"three_views/{product_id}/front.png" if results.get("front") else None,
+                "side": f"three_views/{product_id}/side.png" if results.get("side") else None,
+                "back": f"three_views/{product_id}/back.png" if results.get("back") else None
+            }
+            products[product_idx]["status"] = "SUCCESS"
+            ir_manager.save()
+
+    except Exception as e:
+        print(f"Product generation error: {e}")
+        # Update status to failed
+        try:
+            ir_manager = FilmIRManager(job_id)
+            identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {})
+            products = identity_anchors.get("products", [])
+            product_idx = next((i for i, p in enumerate(products) if p.get("anchorId") == product_id), None)
+            if product_idx is not None:
+                products[product_idx]["status"] = "FAILED"
+                ir_manager.save()
+        except:
+            pass
+
+
 @app.get("/api/job/{job_id}/shot-analysis-status")
 async def get_shot_analysis_status(job_id: str):
     """
