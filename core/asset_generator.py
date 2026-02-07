@@ -219,19 +219,22 @@ Technical requirements:
                 "shot_type": "extreme wide establishing shot",
                 "lens": "14-24mm ultra wide angle lens",
                 "focus": "Capture the full scope and scale of the environment, showing spatial relationships and overall layout",
-                "composition": "Environment fills the frame, emphasizing vastness and context"
+                "composition": "Environment fills the frame, emphasizing vastness and context",
+                "camera_position": "Camera positioned far back to show entire scene, eye-level or slightly elevated"
             },
             AssetType.ENVIRONMENT_DETAIL: {
-                "shot_type": "medium detail shot",
-                "lens": "50-85mm lens",
-                "focus": "Focus on key environmental details, textures, and distinctive features that define this location",
-                "composition": "Highlight specific elements: surfaces, objects, architectural details, natural features"
+                "shot_type": "close-up detail shot",
+                "lens": "85-135mm macro lens",
+                "focus": "IMPORTANT: This is a CLOSE-UP shot focusing on textures, materials, and small distinctive features. Show surface details like wood grain, stone texture, fabric weave, metal patina, or natural patterns",
+                "composition": "Fill frame with interesting textures and details. Show wear marks, reflections, or intricate patterns. This should look completely different from a wide shot",
+                "camera_position": "Camera very close to surfaces, shooting textures and small objects at near-macro distance"
             },
             AssetType.ENVIRONMENT_ALT: {
-                "shot_type": "alternative angle shot",
-                "lens": "35mm lens",
-                "focus": "Different perspective of the same environment, showing depth and three-dimensionality",
-                "composition": "Reveal hidden aspects, different lighting angle, or unique vantage point"
+                "shot_type": "dramatic low angle or high angle shot",
+                "lens": "24-35mm wide angle lens",
+                "focus": "IMPORTANT: Shoot from a dramatically DIFFERENT angle - either looking UP from ground level or looking DOWN from above. Show the environment from an unexpected perspective",
+                "composition": "Use strong diagonal lines, dramatic perspective distortion, or bird's eye / worm's eye view. This should feel like a completely different vantage point",
+                "camera_position": "Camera either very low (ground level looking up) or very high (looking down), creating dramatic perspective"
             }
         }
 
@@ -245,13 +248,17 @@ Technical requirements:
         if style_adaptation:
             style_str = f"Style: {style_adaptation}. "
 
+        camera_position = instructions.get('camera_position', '')
+
         prompt = f"""Cinematic environment {instructions['shot_type']}, {instructions['lens']} perspective.
 
 Location: {anchor_name}
 {detailed_description}
 
+SHOT REQUIREMENTS:
 {instructions['focus']}
 {instructions['composition']}
+{camera_position}
 
 {atmosphere_str}{style_str}
 
@@ -263,7 +270,6 @@ Technical requirements:
 - No people, no characters
 - No text, no watermarks, no logos
 - 16:9 widescreen composition
-- Same location and atmosphere across all views
 - Suitable as background reference for video production
 """
         return prompt.strip()
@@ -692,7 +698,7 @@ Technical requirements:
                 style_adaptation=style_adaptation
             )
 
-            # 准备参考图片
+            # 准备参考图片 - use wide shot as reference to maintain location consistency
             refs = reference_images.copy()
             if wide_image and view != AssetType.ENVIRONMENT_WIDE:
                 refs.append(wide_image)
@@ -806,10 +812,9 @@ Technical requirements:
                 style_adaptation=style_adaptation
             )
 
-            # 准备参考图片
+            # 准备参考图片 - use wide shot as reference to maintain location consistency
             refs_for_this_view = reference_images.copy()
             if wide_image and view != AssetType.ENVIRONMENT_WIDE:
-                # 对于细节和备选角度，加入全景图作为参考
                 refs_for_this_view.append(wide_image)
 
             # 生成图片
