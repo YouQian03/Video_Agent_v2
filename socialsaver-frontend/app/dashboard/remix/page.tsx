@@ -52,7 +52,7 @@ import {
 const WORKFLOW_STEPS = [
   { id: "analysis", label: "Video Analysis", description: "Analyze story theme, script, and storyboard" },
   { id: "script", label: "Generate Remix Script", description: "Create customized script based on your requirements" },
-  { id: "views", label: "Character & Scene Views", description: "Confirm character and scene three-view references" },
+  { id: "views", label: "Asset Management", description: "Configure sound, visual style, and character/scene assets" },
   { id: "storyboard", label: "Generate Storyboard", description: "Generate storyboard from confirmed script" },
   { id: "video", label: "Generate Video", description: "Create final remix video from storyboard" },
 ]

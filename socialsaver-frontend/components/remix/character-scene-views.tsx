@@ -15,10 +15,45 @@ import {
   ImageIcon,
   CheckCircle,
   Sparkles,
-  Loader2
+  Loader2,
+  Music,
+  Palette,
+  Package
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { CharacterView, SceneView } from "@/lib/types/remix"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import type { CharacterView, SceneView, StoryThemeAnalysis } from "@/lib/types/remix"
+
+// Sound Design State
+interface SoundDesign {
+  voiceStyle: string
+  voiceTone: string
+  backgroundMusic: string
+  soundEffects: string
+  voiceSampleUrl?: string
+  musicSampleUrl?: string
+}
+
+// Visual Style State
+interface VisualStyle {
+  artStyle: string
+  colorPalette: string
+  lightingMood: string
+  cameraStyle: string
+  referenceImages: string[]
+}
+
+// Product View
+interface ProductView {
+  id: string
+  name: string
+  description: string
+  frontView?: string
+  sideView?: string
+  backView?: string
+  confirmed: boolean
+}
 import {
   uploadEntityView,
   updateEntityDescription,
@@ -65,6 +100,606 @@ interface CharacterSceneViewsProps {
   onScenesChange: (scenes: SceneView[]) => void
   onConfirm: () => void
   onBack: () => void
+}
+
+// Sound Design Section Component
+function SoundDesignSection({
+  soundDesign,
+  onSoundDesignChange,
+  onConfirm,
+  onCancel,
+}: {
+  soundDesign: SoundDesign
+  onSoundDesignChange: (updates: Partial<SoundDesign>) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const voiceSampleRef = useRef<HTMLInputElement>(null)
+  const musicSampleRef = useRef<HTMLInputElement>(null)
+
+  const handleVoiceSampleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // For now, just create a local URL - in production, this would upload to server
+      const url = URL.createObjectURL(file)
+      onSoundDesignChange({ voiceSampleUrl: url })
+    }
+  }
+
+  const handleMusicSampleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      const url = URL.createObjectURL(file)
+      onSoundDesignChange({ musicSampleUrl: url })
+    }
+  }
+
+  // Show buttons when any sample is uploaded
+  const hasUploads = soundDesign.voiceSampleUrl || soundDesign.musicSampleUrl
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Music className="w-5 h-5 text-accent" />
+          <CardTitle className="text-base text-foreground">Sound Design</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          {/* Voice Style */}
+          <div className="space-y-2">
+            <Label htmlFor="voiceStyle" className="text-sm text-foreground">Voice Style</Label>
+            <Input
+              id="voiceStyle"
+              value={soundDesign.voiceStyle}
+              onChange={(e) => onSoundDesignChange({ voiceStyle: e.target.value })}
+              placeholder="Natural"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Voice Tone */}
+          <div className="space-y-2">
+            <Label htmlFor="voiceTone" className="text-sm text-foreground">Voice Tone</Label>
+            <Input
+              id="voiceTone"
+              value={soundDesign.voiceTone}
+              onChange={(e) => onSoundDesignChange({ voiceTone: e.target.value })}
+              placeholder="Warm and friendly"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Background Music */}
+          <div className="space-y-2">
+            <Label htmlFor="backgroundMusic" className="text-sm text-foreground">Background Music</Label>
+            <Input
+              id="backgroundMusic"
+              value={soundDesign.backgroundMusic}
+              onChange={(e) => onSoundDesignChange({ backgroundMusic: e.target.value })}
+              placeholder="Upbeat, modern electronic"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Sound Effects */}
+          <div className="space-y-2">
+            <Label htmlFor="soundEffects" className="text-sm text-foreground">Sound Effects</Label>
+            <Input
+              id="soundEffects"
+              value={soundDesign.soundEffects}
+              onChange={(e) => onSoundDesignChange({ soundEffects: e.target.value })}
+              placeholder="Subtle, ambient"
+              className="bg-secondary border-border"
+            />
+          </div>
+        </div>
+
+        {/* Sample Uploads */}
+        <div className="grid grid-cols-2 gap-4 pt-2">
+          {/* Voice Sample */}
+          <div className="space-y-2">
+            <Label className="text-sm text-foreground">Voice Sample</Label>
+            <div
+              onClick={() => voiceSampleRef.current?.click()}
+              className={cn(
+                "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all",
+                soundDesign.voiceSampleUrl
+                  ? "border-accent bg-accent/10"
+                  : "border-border hover:border-accent hover:bg-secondary/50"
+              )}
+            >
+              {soundDesign.voiceSampleUrl ? (
+                <div className="flex items-center justify-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <span className="text-sm text-foreground">Voice sample uploaded</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1">
+                  <Upload className="w-5 h-5 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Upload voice sample</span>
+                  <span className="text-xs text-muted-foreground">MP3 up to 10MB</span>
+                </div>
+              )}
+              <input
+                ref={voiceSampleRef}
+                type="file"
+                accept="audio/*"
+                onChange={handleVoiceSampleUpload}
+                className="hidden"
+              />
+            </div>
+          </div>
+
+          {/* Music Sample */}
+          <div className="space-y-2">
+            <Label className="text-sm text-foreground">Music Sample</Label>
+            <div
+              onClick={() => musicSampleRef.current?.click()}
+              className={cn(
+                "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all",
+                soundDesign.musicSampleUrl
+                  ? "border-accent bg-accent/10"
+                  : "border-border hover:border-accent hover:bg-secondary/50"
+              )}
+            >
+              {soundDesign.musicSampleUrl ? (
+                <div className="flex items-center justify-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-accent" />
+                  <span className="text-sm text-foreground">Music sample uploaded</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1">
+                  <Upload className="w-5 h-5 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Upload music sample</span>
+                  <span className="text-xs text-muted-foreground">MP3 up to 10MB</span>
+                </div>
+              )}
+              <input
+                ref={musicSampleRef}
+                type="file"
+                accept="audio/*"
+                onChange={handleMusicSampleUpload}
+                className="hidden"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Confirm / Cancel Buttons - shown when uploads exist */}
+        {hasUploads && (
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={onCancel}
+              className="border-border text-foreground hover:bg-secondary bg-transparent"
+            >
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+            <Button
+              onClick={onConfirm}
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Confirm Sound
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Visual Style Section Component
+function VisualStyleSection({
+  visualStyle,
+  onVisualStyleChange,
+  onConfirm,
+  onCancel,
+}: {
+  visualStyle: VisualStyle
+  onVisualStyleChange: (updates: Partial<VisualStyle>) => void
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const referenceInputRef = useRef<HTMLInputElement>(null)
+
+  const handleReferenceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files) {
+      const newUrls = Array.from(files).map((file) => URL.createObjectURL(file))
+      onVisualStyleChange({
+        referenceImages: [...visualStyle.referenceImages, ...newUrls]
+      })
+    }
+    if (referenceInputRef.current) {
+      referenceInputRef.current.value = ""
+    }
+  }
+
+  const removeReferenceImage = (index: number) => {
+    const newImages = visualStyle.referenceImages.filter((_, i) => i !== index)
+    onVisualStyleChange({ referenceImages: newImages })
+  }
+
+  // Show buttons when reference images are uploaded
+  const hasUploads = visualStyle.referenceImages.length > 0
+
+  return (
+    <Card className="bg-card border-border">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Palette className="w-5 h-5 text-accent" />
+          <CardTitle className="text-base text-foreground">Visual Style</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          {/* Art Style */}
+          <div className="space-y-2">
+            <Label htmlFor="artStyle" className="text-sm text-foreground">Art Style</Label>
+            <Input
+              id="artStyle"
+              value={visualStyle.artStyle}
+              onChange={(e) => onVisualStyleChange({ artStyle: e.target.value })}
+              placeholder="Realistic"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Color Palette */}
+          <div className="space-y-2">
+            <Label htmlFor="colorPalette" className="text-sm text-foreground">Color Palette</Label>
+            <Input
+              id="colorPalette"
+              value={visualStyle.colorPalette}
+              onChange={(e) => onVisualStyleChange({ colorPalette: e.target.value })}
+              placeholder="Warm tones with high contrast"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Lighting Mood */}
+          <div className="space-y-2">
+            <Label htmlFor="lightingMood" className="text-sm text-foreground">Lighting Mood</Label>
+            <Input
+              id="lightingMood"
+              value={visualStyle.lightingMood}
+              onChange={(e) => onVisualStyleChange({ lightingMood: e.target.value })}
+              placeholder="Natural daylight"
+              className="bg-secondary border-border"
+            />
+          </div>
+
+          {/* Camera Style */}
+          <div className="space-y-2">
+            <Label htmlFor="cameraStyle" className="text-sm text-foreground">Camera Style</Label>
+            <Input
+              id="cameraStyle"
+              value={visualStyle.cameraStyle}
+              onChange={(e) => onVisualStyleChange({ cameraStyle: e.target.value })}
+              placeholder="Dynamic with smooth transitions"
+              className="bg-secondary border-border"
+            />
+          </div>
+        </div>
+
+        {/* Reference Images */}
+        <div className="space-y-2 pt-2">
+          <Label className="text-sm text-foreground">Reference Images</Label>
+          <div
+            onClick={() => referenceInputRef.current?.click()}
+            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent hover:bg-secondary/50 transition-all"
+          >
+            <Upload className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+            <p className="text-sm text-muted-foreground">
+              Click to upload reference images
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              PNG, JPG up to 10MB each
+            </p>
+            <input
+              ref={referenceInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleReferenceUpload}
+              className="hidden"
+            />
+          </div>
+
+          {/* Show uploaded reference images */}
+          {visualStyle.referenceImages.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-3">
+              {visualStyle.referenceImages.map((url, index) => (
+                <div key={index} className="relative group">
+                  <img
+                    src={url}
+                    alt={`Reference ${index + 1}`}
+                    className="w-20 h-20 object-cover rounded-lg border border-border"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeReferenceImage(index)}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Confirm / Cancel Buttons - shown when reference images uploaded */}
+        {hasUploads && (
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={onCancel}
+              className="border-border text-foreground hover:bg-secondary bg-transparent"
+            >
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+            <Button
+              onClick={onConfirm}
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Confirm Style
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// Product Card Component
+function ProductCard({
+  jobId,
+  product,
+  onUpdate,
+  onDelete,
+}: {
+  jobId: string
+  product: ProductView
+  onUpdate: (updates: Partial<ProductView>) => void
+  onDelete: () => void
+}) {
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [uploadingView, setUploadingView] = useState<string | null>(null)
+  const [localDescription, setLocalDescription] = useState(product.description)
+
+  useEffect(() => {
+    setLocalDescription(product.description)
+  }, [product.description])
+
+  const handleImageUpload = async (view: 'front' | 'side' | 'back', file: File) => {
+    setUploadingView(view)
+    try {
+      // For now, create local URL - in production would upload to server
+      const url = URL.createObjectURL(file)
+      const viewMap: Record<string, string> = {
+        front: 'frontView',
+        side: 'sideView',
+        back: 'backView'
+      }
+      onUpdate({ [viewMap[view]]: url })
+    } catch (error) {
+      console.error("Upload failed:", error)
+    } finally {
+      setUploadingView(null)
+    }
+  }
+
+  const handleAIGenerate = async () => {
+    setIsGenerating(true)
+    // Simulate AI generation - in production would call backend
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    onUpdate({
+      frontView: '/placeholder-product-front.png',
+      sideView: '/placeholder-product-side.png',
+      backView: '/placeholder-product-back.png',
+      confirmed: true
+    })
+    setIsGenerating(false)
+  }
+
+  const handleConfirm = () => {
+    onUpdate({ confirmed: true })
+  }
+
+  const allViewsFilled = product.frontView && product.sideView && product.backView
+
+  return (
+    <Card className={cn(
+      "bg-card border-border transition-all",
+      product.confirmed && "border-accent/50"
+    )}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Package className="w-5 h-5 text-accent" />
+            <Input
+              value={product.name}
+              onChange={(e) => onUpdate({ name: e.target.value })}
+              placeholder="Product Name"
+              className="bg-transparent border-none p-0 h-auto text-base font-semibold focus-visible:ring-0"
+            />
+            {product.confirmed && (
+              <CheckCircle className="w-4 h-4 text-accent" />
+            )}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDelete}
+            className="text-muted-foreground hover:text-red-500"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Three View Slots */}
+        <div className="flex justify-center gap-4">
+          <ViewUploadSlot
+            label="Front"
+            imageUrl={product.frontView}
+            isLoading={uploadingView === 'front'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('front', file)}
+          />
+          <ViewUploadSlot
+            label="Side"
+            imageUrl={product.sideView}
+            isLoading={uploadingView === 'side'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('side', file)}
+          />
+          <ViewUploadSlot
+            label="Back"
+            imageUrl={product.backView}
+            isLoading={uploadingView === 'back'}
+            disabled={isGenerating}
+            onUpload={(file) => handleImageUpload('back', file)}
+          />
+        </div>
+
+        {/* Description */}
+        <Textarea
+          value={localDescription}
+          onChange={(e) => {
+            setLocalDescription(e.target.value)
+            onUpdate({ description: e.target.value })
+          }}
+          placeholder="Product description for AI generation..."
+          className="bg-secondary border-border text-foreground min-h-[80px] text-sm"
+          disabled={isGenerating}
+        />
+
+        {/* Action Buttons */}
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAIGenerate}
+            disabled={isGenerating || !localDescription.trim()}
+            className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 mr-1" />
+                AI Generate
+              </>
+            )}
+          </Button>
+          {allViewsFilled && !product.confirmed && (
+            <Button
+              size="sm"
+              onClick={handleConfirm}
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+            >
+              <Check className="w-4 h-4 mr-1" />
+              Confirm
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+// Product Three-Views Section
+function ProductThreeViewsSection({
+  jobId,
+  products,
+  onProductsChange,
+}: {
+  jobId: string
+  products: ProductView[]
+  onProductsChange: (products: ProductView[]) => void
+}) {
+  const addProduct = () => {
+    const newProduct: ProductView = {
+      id: `product_${Date.now()}`,
+      name: "",
+      description: "",
+      confirmed: false,
+    }
+    onProductsChange([...products, newProduct])
+  }
+
+  const updateProduct = (id: string, updates: Partial<ProductView>) => {
+    onProductsChange(
+      products.map((p) => (p.id === id ? { ...p, ...updates } : p))
+    )
+  }
+
+  const deleteProduct = (id: string) => {
+    onProductsChange(products.filter((p) => p.id !== id))
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
+          <Package className="w-5 h-5 text-accent" />
+          Product Three-Views
+          <span className="text-sm font-normal text-muted-foreground">
+            ({products.filter(p => p.confirmed).length}/{products.length} confirmed)
+          </span>
+        </h3>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={addProduct}
+          className="border-accent text-accent hover:bg-accent/10 bg-transparent"
+        >
+          <Package className="w-4 h-4 mr-1" />
+          Add Product
+        </Button>
+      </div>
+
+      {products.length === 0 ? (
+        <Card className="bg-card border-border border-dashed">
+          <CardContent className="py-8 flex flex-col items-center justify-center text-center">
+            <Package className="w-12 h-12 text-muted-foreground mb-3" />
+            <p className="text-muted-foreground">No products added yet</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={addProduct}
+              className="mt-4 border-accent text-accent hover:bg-accent/10 bg-transparent"
+            >
+              Add First Product
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {products.map((product) => (
+            <ProductCard
+              key={product.id}
+              jobId={jobId}
+              product={product}
+              onUpdate={(updates) => updateProduct(product.id, updates)}
+              onDelete={() => deleteProduct(product.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ViewUploadSlot({
@@ -571,6 +1206,69 @@ export function CharacterSceneViews({
   onConfirm,
   onBack,
 }: CharacterSceneViewsProps) {
+  // Sound Design State
+  const [soundDesign, setSoundDesign] = useState<SoundDesign>({
+    voiceStyle: "Natural",
+    voiceTone: "Warm and friendly",
+    backgroundMusic: "Upbeat, modern electronic",
+    soundEffects: "Subtle, ambient",
+  })
+  const [soundDesignConfirmed, setSoundDesignConfirmed] = useState(false)
+
+  // Visual Style State
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>({
+    artStyle: "Realistic",
+    colorPalette: "Warm tones with high contrast",
+    lightingMood: "Natural daylight",
+    cameraStyle: "Dynamic with smooth transitions",
+    referenceImages: [],
+  })
+  const [visualStyleConfirmed, setVisualStyleConfirmed] = useState(false)
+
+  // Products State
+  const [products, setProducts] = useState<ProductView[]>([])
+
+  const handleSoundDesignChange = (updates: Partial<SoundDesign>) => {
+    setSoundDesign((prev) => ({ ...prev, ...updates }))
+    // Reset confirmation when changes are made
+    setSoundDesignConfirmed(false)
+  }
+
+  const handleVisualStyleChange = (updates: Partial<VisualStyle>) => {
+    setVisualStyle((prev) => ({ ...prev, ...updates }))
+    // Reset confirmation when changes are made
+    setVisualStyleConfirmed(false)
+  }
+
+  // Sound Design confirm/cancel handlers
+  const handleSoundDesignConfirm = () => {
+    setSoundDesignConfirmed(true)
+    console.log("Sound design confirmed:", soundDesign)
+  }
+
+  const handleSoundDesignCancel = () => {
+    // Clear uploaded samples
+    setSoundDesign((prev) => ({
+      ...prev,
+      voiceSampleUrl: undefined,
+      musicSampleUrl: undefined,
+    }))
+  }
+
+  // Visual Style confirm/cancel handlers
+  const handleVisualStyleConfirm = () => {
+    setVisualStyleConfirmed(true)
+    console.log("Visual style confirmed:", visualStyle)
+  }
+
+  const handleVisualStyleCancel = () => {
+    // Clear uploaded reference images
+    setVisualStyle((prev) => ({
+      ...prev,
+      referenceImages: [],
+    }))
+  }
+
   // Initialize characters: Ledger (complete list) + Anchors (overrides)
   // Merge logic: All entities from ledger are shown, anchors provide description updates
   useEffect(() => {
@@ -681,12 +1379,27 @@ export function CharacterSceneViews({
       <Card className="bg-accent/10 border-accent">
         <CardContent className="py-4">
           <p className="text-sm text-foreground">
-            Upload or AI-generate three-view reference images for characters and scenes.
-            You can upload your own images, or click &quot;AI Generate&quot; to create them automatically.
-            Missing views will be generated based on uploaded images and descriptions.
+            Configure sound design, visual style, and three-view reference images for your remix.
+            Customize audio settings, visual aesthetics, and upload or AI-generate character, scene, and product assets.
           </p>
         </CardContent>
       </Card>
+
+      {/* Sound Design Section */}
+      <SoundDesignSection
+        soundDesign={soundDesign}
+        onSoundDesignChange={handleSoundDesignChange}
+        onConfirm={handleSoundDesignConfirm}
+        onCancel={handleSoundDesignCancel}
+      />
+
+      {/* Visual Style Section */}
+      <VisualStyleSection
+        visualStyle={visualStyle}
+        onVisualStyleChange={handleVisualStyleChange}
+        onConfirm={handleVisualStyleConfirm}
+        onCancel={handleVisualStyleCancel}
+      />
 
       {/* Characters Section */}
       <div className="space-y-4">
@@ -761,6 +1474,13 @@ export function CharacterSceneViews({
           </div>
         )}
       </div>
+
+      {/* Product Three-Views Section */}
+      <ProductThreeViewsSection
+        jobId={jobId}
+        products={products}
+        onProductsChange={setProducts}
+      />
 
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-border">
