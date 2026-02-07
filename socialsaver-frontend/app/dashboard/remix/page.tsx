@@ -40,12 +40,14 @@ import {
   pollRemixStatus,
   getRemixDiff,
   getRemixPrompts,
+  generateRemixStoryboard,
   type SocialSaverStoryboard,
   type CharacterEntity,
   type EnvironmentEntity,
   type RemixDiffResponse,
   type RemixPromptsResponse,
   type IdentityAnchor,
+  type RemixStoryboardShot,
 } from "@/lib/api"
 
 // Step definitions - now with 5 steps including character/scene views
@@ -866,16 +868,56 @@ export default function RemixPage() {
   }
   
   const handleViewsConfirm = async () => {
+    if (!currentJobId) {
+      setApiError("No job ID available. Please upload a video first.")
+      return
+    }
+
     setStep("generatingStoryboard")
     setCompletedSteps(["analysis", "script", "views"])
-    
-    // Simulate API call for storyboard generation
-    await new Promise((resolve) => setTimeout(resolve, 2500))
-    
-    setFinalStoryboard(mockFinalStoryboard)
-    setStep("storyboard")
-    setDisplayStep("storyboard")
-    setCompletedSteps(["analysis", "script", "views", "storyboard"])
+    setApiError(null)
+
+    try {
+      // 🔌 Real API Call: Generate remix storyboard
+      console.log("🎬 Generating remix storyboard...")
+      const result = await generateRemixStoryboard(currentJobId)
+      console.log("✅ Remix storyboard generated:", result.storyboard.length, "shots")
+
+      // Convert RemixStoryboardShot to StoryboardShot format
+      const storyboard: StoryboardShot[] = result.storyboard.map((shot) => ({
+        shotNumber: shot.shotNumber,
+        firstFrameImage: shot.firstFrameImage ? getAssetUrl(currentJobId, shot.firstFrameImage.replace(`/assets/${currentJobId}/`, "")) : "",
+        visualDescription: shot.visualDescription,
+        contentDescription: shot.contentDescription,
+        startSeconds: shot.startSeconds,
+        endSeconds: shot.endSeconds,
+        durationSeconds: shot.durationSeconds,
+        shotSize: shot.shotSize,
+        cameraAngle: shot.cameraAngle,
+        cameraMovement: shot.cameraMovement,
+        focalLengthDepth: shot.focalLengthDepth,
+        lighting: shot.lighting,
+        music: shot.music,
+        dialogueVoiceover: shot.dialogueVoiceover,
+      }))
+
+      setFinalStoryboard(storyboard)
+      setStep("storyboard")
+      setDisplayStep("storyboard")
+      setCompletedSteps(["analysis", "script", "views", "storyboard"])
+
+    } catch (error) {
+      console.error("❌ Storyboard generation error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Storyboard generation failed"
+      setApiError(errorMessage)
+
+      // Fallback to mock if API fails (for development/testing)
+      console.log("⚠️ Falling back to mock storyboard...")
+      setFinalStoryboard(mockFinalStoryboard)
+      setStep("storyboard")
+      setDisplayStep("storyboard")
+      setCompletedSteps(["analysis", "script", "views", "storyboard"])
+    }
   }
   
   const handleViewsBack = () => {
@@ -1351,6 +1393,7 @@ export default function RemixPage() {
                 <StoryboardTable data={finalStoryboard} title="Remix Storyboard" />
                 
                 <StoryboardChat
+                  jobId={currentJobId || ""}
                   storyboard={finalStoryboard}
                   onUpdateStoryboard={handleUpdateStoryboard}
                   onConfirm={handleConfirmStoryboard}

@@ -1267,3 +1267,95 @@ export async function pollProductGenerationStatus(
 
   throw new Error("Product generation polling timeout");
 }
+
+// ============================================================
+// M6: Remix Storyboard API
+// ============================================================
+
+export interface RemixStoryboardShot {
+  shotNumber: number;
+  shotId: string;
+  firstFrameImage: string;
+  visualDescription: string;
+  contentDescription: string;
+  startSeconds: number;
+  endSeconds: number;
+  durationSeconds: number;
+  shotSize: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  focalLengthDepth: string;
+  lighting: string;
+  music: string;
+  dialogueVoiceover: string;
+  i2vPrompt: string;
+  appliedAnchors: {
+    characters: string[];
+    environments: string[];
+  };
+}
+
+export interface RemixStoryboardResponse {
+  jobId: string;
+  storyboard: RemixStoryboardShot[];
+  totalDuration: number;
+  remixContext: {
+    identityAnchors: {
+      characters: IdentityAnchor[];
+      environments: IdentityAnchor[];
+    };
+    visualStyle: VisualStyleConfig;
+    shotCount: number;
+  };
+}
+
+export interface StoryboardChatResponse {
+  updatedStoryboard: RemixStoryboardShot[];
+  affectedShots: number[];
+  response: string;
+  action: "parameter_change" | "regenerate_prompt" | "info_query";
+  totalDuration: number;
+}
+
+/**
+ * 生成 Remix Storyboard
+ */
+export async function generateRemixStoryboard(jobId: string): Promise<RemixStoryboardResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-remix-storyboard`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to generate remix storyboard" }));
+    throw new Error(error.detail || "Failed to generate remix storyboard");
+  }
+
+  return response.json();
+}
+
+/**
+ * Storyboard AI Chat - 自然语言修改分镜
+ */
+export async function storyboardChat(
+  jobId: string,
+  message: string,
+  currentStoryboard: RemixStoryboardShot[]
+): Promise<StoryboardChatResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/storyboard/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      currentStoryboard,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Storyboard chat failed" }));
+    throw new Error(error.detail || "Storyboard chat failed");
+  }
+
+  return response.json();
+}

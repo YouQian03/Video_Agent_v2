@@ -10,12 +10,174 @@ from PIL import Image
 
 from .workflow_io import save_workflow, load_workflow
 from .utils import get_ffmpeg_path
+from .film_ir_io import load_film_ir, film_ir_exists
+from typing import Dict, Any, Optional, Tuple
 
 
 def ensure_videos_dir(job_dir: Path) -> Path:
     videos_dir = job_dir / "videos"
     videos_dir.mkdir(parents=True, exist_ok=True)
     return videos_dir
+
+
+def get_remix_shot_data(job_dir: Path, shot_id: str) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
+    """
+    🎬 获取 Remix 后的分镜数据
+
+    检查 Film IR 是否有 remixed 层，如果有则返回：
+    1. remixed i2v prompt 数据
+    2. identity anchors (角色/环境锚点)
+    3. visual style 配置
+
+    Returns:
+        Tuple of (i2v_prompt_data, identity_anchors, visual_style) or (None, None, None)
+    """
+    if not film_ir_exists(job_dir):
+        return None, None, None
+
+    try:
+        ir = load_film_ir(job_dir)
+        if not ir:
+            return None, None, None
+
+        # 🎯 关键：remixedLayer 在 userIntent 下，不在 pillars 下
+        remixed = ir.get("userIntent", {}).get("remixedLayer", {})
+
+        if not remixed:
+            return None, None, None
+
+        # 查找对应的 shot
+        remixed_shots = remixed.get("shots", [])
+        target_shot = None
+        for shot in remixed_shots:
+            if shot.get("shotId") == shot_id:
+                target_shot = shot
+                break
+
+        if not target_shot:
+            return None, None, None
+
+        # 获取 identity anchors
+        identity_anchors = remixed.get("identityAnchors", {})
+
+        # 获取 visual style 配置
+        render_strategy = ir.get("pillars", {}).get("IV_renderStrategy", {})
+        visual_style = render_strategy.get("visualStyleConfig", {})
+
+        print(f"🎬 [Remix Data] Found remixed data for {shot_id}")
+        return target_shot, identity_anchors, visual_style
+
+    except Exception as e:
+        print(f"⚠️ [Remix Data] Error loading remix data: {e}")
+        return None, None, None
+
+
+def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style: Dict) -> str:
+    """
+    🎨 构建基于 Remix 数据的生成 Prompt
+
+    整合：
+    1. remixed shot 的 i2v prompt
+    2. identity anchors 的详细描述
+    3. visual style 的风格配置
+    """
+    # 基础 prompt - 从 remixed shot 获取
+    base_prompt = remixed_shot.get("remixedI2VPrompt", "") or remixed_shot.get("subject", "")
+
+    # 如果有完整的 i2v prompt 结构
+    if remixed_shot.get("i2vPrompt"):
+        base_prompt = remixed_shot.get("i2vPrompt", {}).get("prompt", base_prompt)
+
+    # 构建 identity 描述
+    identity_parts = []
+
+    # 添加角色锚点
+    characters = identity_anchors.get("characters", [])
+    for char in characters:
+        anchor_id = char.get("anchorId", "")
+        # 检查这个 shot 是否使用了这个角色
+        applied_anchors = remixed_shot.get("appliedAnchors", {}).get("characters", [])
+        if anchor_id in applied_anchors or not applied_anchors:
+            desc = char.get("detailedDescription", "")
+            if desc:
+                identity_parts.append(f"Character: {desc}")
+
+    # 添加环境锚点
+    environments = identity_anchors.get("environments", [])
+    for env in environments:
+        anchor_id = env.get("anchorId", "")
+        applied_anchors = remixed_shot.get("appliedAnchors", {}).get("environments", [])
+        if anchor_id in applied_anchors or not applied_anchors:
+            desc = env.get("detailedDescription", "")
+            if desc:
+                identity_parts.append(f"Environment: {desc}")
+
+    # 构建 visual style 描述
+    style_parts = []
+    if visual_style.get("artStyle"):
+        style_parts.append(f"Art Style: {visual_style['artStyle']}")
+    if visual_style.get("colorPalette"):
+        style_parts.append(f"Color: {visual_style['colorPalette']}")
+    if visual_style.get("lightingMood"):
+        style_parts.append(f"Lighting: {visual_style['lightingMood']}")
+    if visual_style.get("cameraStyle"):
+        style_parts.append(f"Camera: {visual_style['cameraStyle']}")
+
+    # 组合最终 prompt
+    final_prompt = base_prompt
+
+    if identity_parts:
+        final_prompt += "\n\n" + "\n".join(identity_parts)
+
+    if style_parts:
+        final_prompt += "\n\n[VISUAL STYLE]\n" + ", ".join(style_parts)
+
+    return final_prompt
+
+
+def get_effective_shot_data(job_dir: Path, wf: dict, shot: dict) -> Tuple[str, dict]:
+    """
+    🎯 获取有效的分镜数据（优先使用 Remix 数据）
+
+    逻辑：
+    1. 先检查是否有 remixed 层
+    2. 如果有，使用 remixed prompt + identity anchors + visual style
+    3. 如果没有，使用原始 workflow 的 description
+
+    Returns:
+        Tuple of (effective_prompt, effective_cinematography)
+    """
+    shot_id = shot.get("shot_id")
+
+    # 尝试获取 remix 数据
+    remixed_shot, identity_anchors, visual_style = get_remix_shot_data(job_dir, shot_id)
+
+    if remixed_shot:
+        # 使用 remix 数据
+        effective_prompt = build_remix_prompt(remixed_shot, identity_anchors, visual_style)
+
+        # 获取摄影参数 - 优先使用 remixed 的 camera 数据
+        camera_data = remixed_shot.get("camera", {})
+        if not camera_data:
+            camera_data = remixed_shot.get("cameraPreserved", {})
+
+        effective_cinema = {
+            "shot_scale": camera_data.get("shotSize", shot.get("cinematography", {}).get("shot_scale", "")),
+            "subject_frame_position": shot.get("cinematography", {}).get("subject_frame_position", ""),
+            "subject_orientation": camera_data.get("cameraAngle", shot.get("cinematography", {}).get("subject_orientation", "")),
+            "gaze_direction": shot.get("cinematography", {}).get("gaze_direction", ""),
+            "motion_vector": camera_data.get("cameraMovement", shot.get("cinematography", {}).get("motion_vector", "static")),
+            "camera_type": shot.get("cinematography", {}).get("camera_type", "")
+        }
+
+        print(f"✅ [Effective Data] Using REMIXED data for {shot_id}")
+        return effective_prompt, effective_cinema
+    else:
+        # 使用原始数据
+        effective_prompt = shot.get("description", "")
+        effective_cinema = shot.get("cinematography", {})
+        print(f"📋 [Effective Data] Using ORIGINAL workflow data for {shot_id}")
+        return effective_prompt, effective_cinema
 
 
 def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
@@ -36,10 +198,11 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     if dst.exists(): os.remove(dst)
 
     global_style = wf.get("global", {}).get("style_prompt", "Cinematic")
-    description = shot.get("description", "")
+
+    # 🎬 获取有效数据（优先使用 Remix 数据）
+    description, cinema = get_effective_shot_data(job_dir, wf, shot)
 
     # 🎬 Extract cinematography parameters for fidelity enforcement
-    cinema = shot.get("cinematography", {})
     shot_scale = cinema.get("shot_scale", "")
     subject_position = cinema.get("subject_frame_position", "")
     subject_orientation = cinema.get("subject_orientation", "")
@@ -160,12 +323,13 @@ FORBIDDEN:
 
 --ar 16:9"""
 
-    print(f"️  AI 正在尝试生成定妆图: {shot['shot_id']}")
+    print(f"🎨 AI 正在生成定妆图: {shot['shot_id']}")
 
     try:
-        print(f"📡 尝试调用 Imagen 4.0 (models/imagen-4.0-generate-001)...")
+        # 使用 Gemini 3 Pro Image Preview (与三视图生成一致)
+        print(f"📡 调用 Gemini 3 Pro Image (gemini-3-pro-image-preview)...")
         response = client.models.generate_images(
-            model="models/imagen-4.0-generate-001",
+            model="gemini-3-pro-image-preview",
             prompt=prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
@@ -178,28 +342,10 @@ FORBIDDEN:
                 gen_img.image.save(dst)
             else:
                 with open(dst, 'wb') as f: f.write(gen_img.image.image_bytes)
-            print(f"✅ 使用 Imagen 4.0 生成成功！")
+            print(f"✅ Gemini 3 Pro Image 生成成功！")
             return f"stylized_frames/{dst.name}"
     except Exception as e:
-        print(f"⚠️ Imagen 4.0 调用失败: {str(e)[:100]}...")
-
-    try:
-        print(f"📡 尝试调用集成生图模型 (models/gemini-2.0-flash-exp-image-generation)...")
-        response = client.models.generate_content(
-            model="models/gemini-2.0-flash-exp-image-generation",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE"]
-            )
-        )
-        for part in response.parts:
-            if part.inline_data is not None:
-                img = Image.open(io.BytesIO(part.inline_data.data))
-                img.save(dst)
-                print(f"✅ 使用 Gemini 2.0 集成模型生成成功！")
-                return f"stylized_frames/{dst.name}"
-    except Exception as e:
-        print(f"❌ 所有生图模型均失败: {str(e)[:100]}...")
+        print(f"❌ Gemini 3 Pro Image 调用失败: {str(e)[:100]}...")
 
     print("⚠️ 执行原图占位。")
     shutil.copyfile(src, dst)
@@ -238,11 +384,12 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     print(f"🚀 [Veo 3.1] 正在渲染分镜视频: {shot['shot_id']}")
 
     image_bytes = img_path.read_bytes()
-    description = shot.get('description', '')
     style = wf.get('global', {}).get('style_prompt', '')
 
+    # 🎬 获取有效数据（优先使用 Remix 数据）
+    description, cinema = get_effective_shot_data(job_dir, wf, shot)
+
     # 🎬 Extract cinematography parameters for video fidelity
-    cinema = shot.get("cinematography", {})
     shot_scale = cinema.get("shot_scale", "")
     subject_position = cinema.get("subject_frame_position", "")
     subject_orientation = cinema.get("subject_orientation", "")

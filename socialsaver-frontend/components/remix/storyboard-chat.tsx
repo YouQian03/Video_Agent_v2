@@ -7,34 +7,38 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Send, Bot, User, Edit3, Check, Loader2 } from "lucide-react"
+import { Send, Bot, User, Edit3, Check, Loader2, AlertCircle } from "lucide-react"
 import type { StoryboardShot } from "@/lib/types/remix"
+import { storyboardChat, type RemixStoryboardShot } from "@/lib/api"
 
 interface Message {
   id: string
   role: "user" | "assistant"
   content: string
   affectedShots?: number[]
+  action?: string
   timestamp: Date
 }
 
 interface StoryboardChatProps {
+  jobId: string
   storyboard: StoryboardShot[]
   onUpdateStoryboard: (updatedShots: StoryboardShot[]) => void
   onConfirm: () => void
 }
 
-export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: StoryboardChatProps) {
+export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfirm }: StoryboardChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
       role: "assistant",
-      content: "I'll help you refine the storyboard. Tell me which shot(s) you'd like to modify and what changes you want. For example: 'Change shot 3 to use warmer lighting' or 'Make shots 2-4 faster paced'.",
+      content: "I'll help you refine the storyboard. Tell me which shot(s) you'd like to modify and what changes you want. For example:\n\n- '把镜头3的时长加倍'\n- 'Make shot 2 use warmer lighting'\n- '给主角加个墨镜'",
       timestamp: new Date(),
     },
   ])
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -44,6 +48,49 @@ export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: St
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Convert StoryboardShot to RemixStoryboardShot for API
+  const convertToRemixFormat = (shots: StoryboardShot[]): RemixStoryboardShot[] => {
+    return shots.map((shot, idx) => ({
+      shotNumber: shot.shotNumber,
+      shotId: `shot_${String(shot.shotNumber).padStart(2, "0")}`,
+      firstFrameImage: shot.firstFrameImage,
+      visualDescription: shot.visualDescription,
+      contentDescription: shot.contentDescription,
+      startSeconds: shot.startSeconds,
+      endSeconds: shot.endSeconds,
+      durationSeconds: shot.durationSeconds,
+      shotSize: shot.shotSize,
+      cameraAngle: shot.cameraAngle,
+      cameraMovement: shot.cameraMovement,
+      focalLengthDepth: shot.focalLengthDepth,
+      lighting: shot.lighting,
+      music: shot.music,
+      dialogueVoiceover: shot.dialogueVoiceover,
+      i2vPrompt: shot.visualDescription, // Use visualDescription as fallback
+      appliedAnchors: { characters: [], environments: [] },
+    }))
+  }
+
+  // Convert RemixStoryboardShot back to StoryboardShot
+  const convertFromRemixFormat = (shots: RemixStoryboardShot[]): StoryboardShot[] => {
+    return shots.map((shot) => ({
+      shotNumber: shot.shotNumber,
+      firstFrameImage: shot.firstFrameImage,
+      visualDescription: shot.visualDescription,
+      contentDescription: shot.contentDescription,
+      startSeconds: shot.startSeconds,
+      endSeconds: shot.endSeconds,
+      durationSeconds: shot.durationSeconds,
+      shotSize: shot.shotSize,
+      cameraAngle: shot.cameraAngle,
+      cameraMovement: shot.cameraMovement,
+      focalLengthDepth: shot.focalLengthDepth,
+      lighting: shot.lighting,
+      music: shot.music,
+      dialogueVoiceover: shot.dialogueVoiceover,
+    }))
+  }
 
   const handleSend = async () => {
     if (!input.trim() || isProcessing) return
@@ -58,44 +105,49 @@ export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: St
     setMessages((prev) => [...prev, userMessage])
     setInput("")
     setIsProcessing(true)
+    setError(null)
 
-    // Simulate AI processing and storyboard update
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    try {
+      // 🔌 Real API Call
+      console.log("🎬 Sending storyboard chat request...")
+      const currentStoryboard = convertToRemixFormat(storyboard)
+      const result = await storyboardChat(jobId, input, currentStoryboard)
+      console.log("✅ Chat response received:", result.action, "affected:", result.affectedShots)
 
-    // Parse which shots are affected (mock implementation)
-    const shotMatches = input.match(/shot\s*(\d+)/gi)
-    const affectedShots = shotMatches
-      ? shotMatches.map((m) => Number.parseInt(m.replace(/shot\s*/i, "")))
-      : []
+      // Create assistant message
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: result.response,
+        affectedShots: result.affectedShots,
+        action: result.action,
+        timestamp: new Date(),
+      }
 
-    // Mock response based on input
-    const assistantMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      role: "assistant",
-      content: affectedShots.length > 0
-        ? `I've updated shot${affectedShots.length > 1 ? 's' : ''} ${affectedShots.join(', ')} based on your request. The changes include:\n\n- Modified visual description to match your requirements\n- Adjusted camera movement and lighting as needed\n- Updated timing if specified\n\nPlease review the updated storyboard below. Let me know if you'd like any further adjustments.`
-        : "I understand you want to make changes. Could you please specify which shot number(s) you'd like to modify? For example: 'Change shot 2 to...' or 'Update shots 1-3 with...'",
-      affectedShots: affectedShots.length > 0 ? affectedShots : undefined,
-      timestamp: new Date(),
+      setMessages((prev) => [...prev, assistantMessage])
+
+      // Update storyboard if there were changes
+      if (result.affectedShots.length > 0 && result.updatedStoryboard) {
+        const updatedShots = convertFromRemixFormat(result.updatedStoryboard)
+        onUpdateStoryboard(updatedShots)
+      }
+
+    } catch (err) {
+      console.error("❌ Storyboard chat error:", err)
+      const errorMessage = err instanceof Error ? err.message : "Chat request failed"
+      setError(errorMessage)
+
+      // Fallback: Show error as assistant message
+      const errorAssistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `Sorry, I encountered an error processing your request: ${errorMessage}\n\nPlease try again or rephrase your request.`,
+        timestamp: new Date(),
+      }
+      setMessages((prev) => [...prev, errorAssistantMessage])
+    } finally {
+      setIsProcessing(false)
     }
-
-    setMessages((prev) => [...prev, assistantMessage])
-
-    // If shots were affected, update the storyboard (mock update)
-    if (affectedShots.length > 0) {
-      const updatedStoryboard = storyboard.map((shot) => {
-        if (affectedShots.includes(shot.shotNumber)) {
-          return {
-            ...shot,
-            visualDescription: `[Updated] ${shot.visualDescription}`,
-          }
-        }
-        return shot
-      })
-      onUpdateStoryboard(updatedStoryboard)
-    }
-
-    setIsProcessing(false)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -119,6 +171,14 @@ export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: St
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Error Alert */}
+        {error && (
+          <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-red-500" />
+            <p className="text-sm text-red-500">{error}</p>
+          </div>
+        )}
+
         {/* Messages Area */}
         <div className="h-64 overflow-y-auto space-y-3 p-3 bg-secondary/50 rounded-lg">
           {messages.map((message) => (
@@ -150,6 +210,14 @@ export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: St
                         Shot {shot}
                       </Badge>
                     ))}
+                    {message.action && (
+                      <Badge
+                        variant="outline"
+                        className="text-xs border-accent/50 text-accent"
+                      >
+                        {message.action === "regenerate_prompt" ? "AI Regenerated" : "Updated"}
+                      </Badge>
+                    )}
                   </div>
                 )}
               </div>
@@ -197,6 +265,7 @@ export function StoryboardChat({ storyboard, onUpdateStoryboard, onConfirm }: St
           onClick={onConfirm}
           className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
           size="lg"
+          disabled={isProcessing}
         >
           <Check className="w-4 h-4 mr-2" />
           Confirm Storyboard & Generate Video

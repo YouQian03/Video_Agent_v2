@@ -771,6 +771,524 @@ async def get_remix_prompts(job_id: str):
 
 
 # ============================================================
+# M6: Remix Storyboard Generation API
+# ============================================================
+
+def generate_storyboard_frame(
+    job_dir: Path,
+    job_id: str,
+    shot_id: str,
+    t2i_prompt: str,
+    applied_anchors: dict,
+    identity_anchors: dict,
+    visual_style: dict
+) -> str:
+    """
+    使用 Gemini 生成分镜首帧图片
+
+    Args:
+        job_dir: Job 目录
+        job_id: Job ID
+        shot_id: Shot ID (e.g., "shot_01")
+        t2i_prompt: T2I_FirstFrame prompt
+        applied_anchors: 该镜头应用的锚点 {"characters": [...], "environments": [...]}
+        identity_anchors: 完整的身份锚点数据
+        visual_style: 视觉风格配置
+
+    Returns:
+        生成图片的 URL 路径
+    """
+    import io
+    from PIL import Image
+    from google import genai
+    from google.genai import types
+
+    # 创建 storyboard_frames 目录
+    storyboard_dir = job_dir / "storyboard_frames"
+    storyboard_dir.mkdir(exist_ok=True)
+
+    # 构建完整的 prompt
+    prompt_parts = []
+
+    # 1. 主 T2I prompt
+    if t2i_prompt:
+        prompt_parts.append(t2i_prompt)
+
+    # 2. 添加应用的角色锚点描述
+    char_ids = applied_anchors.get("characters", [])
+    if char_ids and identity_anchors.get("characters"):
+        char_descs = []
+        for char in identity_anchors["characters"]:
+            if char.get("anchorId") in char_ids:
+                desc = char.get("detailedDescription", "")
+                if desc:
+                    char_descs.append(desc[:200])  # 限制长度
+        if char_descs:
+            prompt_parts.append(f"Characters: {'; '.join(char_descs)}")
+
+    # 3. 添加应用的环境锚点描述
+    env_ids = applied_anchors.get("environments", [])
+    if env_ids and identity_anchors.get("environments"):
+        env_descs = []
+        for env in identity_anchors["environments"]:
+            if env.get("anchorId") in env_ids:
+                desc = env.get("detailedDescription", "")
+                if desc:
+                    env_descs.append(desc[:200])
+        if env_descs:
+            prompt_parts.append(f"Environment: {'; '.join(env_descs)}")
+
+    # 4. 添加视觉风格
+    style_parts = []
+    if visual_style.get("artStyle"):
+        style_parts.append(f"Art style: {visual_style['artStyle']}")
+    if visual_style.get("colorPalette"):
+        style_parts.append(f"Color palette: {visual_style['colorPalette']}")
+    if visual_style.get("lightingMood"):
+        style_parts.append(f"Lighting: {visual_style['lightingMood']}")
+    if style_parts:
+        prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
+
+    # 5. 添加技术要求
+    prompt_parts.append("High quality, cinematic composition, detailed, 16:9 aspect ratio, single image")
+
+    final_prompt = ". ".join(prompt_parts)
+    print(f"🎨 [Storyboard] Generating {shot_id} with prompt: {final_prompt[:100]}...")
+
+    try:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            print(f"   ❌ GEMINI_API_KEY not set")
+            return ""
+
+        client = genai.Client(api_key=api_key)
+
+        # 使用 generate_content 配合 response_modalities=['IMAGE']
+        # 这是与 asset_generator.py 相同的方法
+        config = types.GenerateContentConfig(
+            response_modalities=['IMAGE'],
+        )
+
+        response = client.models.generate_content(
+            model="gemini-3-pro-image-preview",  # 与 asset_generator 相同的模型
+            contents=[final_prompt],
+            config=config
+        )
+
+        # 提取生成的图片
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
+                image_data = part.inline_data.data
+                image = Image.open(io.BytesIO(image_data))
+                output_path = storyboard_dir / f"{shot_id}.png"
+                image.save(output_path)
+                print(f"   ✅ Generated: {output_path}")
+                return f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
+
+        print(f"   ⚠️ No image generated for {shot_id}")
+        return ""
+
+    except Exception as e:
+        print(f"   ❌ Failed to generate {shot_id}: {e}")
+        return ""
+
+
+@app.post("/api/job/{job_id}/generate-remix-storyboard")
+async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTasks):
+    """
+    生成 Remix Storyboard
+
+    使用 AI 生成每个分镜的首帧图片：
+    - 从 T2I_FirstFrame prompt 获取基础描述
+    - 结合 Identity Anchors 的详细描述
+    - 应用 Visual Style 配置
+    - 调用 gemini-3-pro-image-preview 生成图片
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # 获取 visual style 配置
+    render_strategy = ir_manager.ir.get("pillars", {}).get("IV_renderStrategy", {})
+    visual_style = render_strategy.get("visualStyleConfig", {})
+
+    # 获取原始 concrete shots（用于 fallback）
+    concrete_shots = ir_manager.ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+
+    remixed_layer = ir_manager.get_remixed_layer()
+    storyboard = []
+    identity_anchors = {}
+    is_using_original = False
+
+    if remixed_layer and remixed_layer.get("shots"):
+        # ===== 使用 remixedLayer 数据并生成新的分镜图 =====
+        print(f"🎬 [Storyboard] Generating storyboard frames using remixed data...")
+
+        identity_anchors = remixed_layer.get("identityAnchors", {})
+        remixed_shots = remixed_layer.get("shots", [])
+
+        for idx, shot in enumerate(remixed_shots):
+            shot_id = shot.get("shotId", f"shot_{idx + 1:02d}")
+
+            # 获取 T2I_FirstFrame prompt
+            t2i_prompt = shot.get("T2I_FirstFrame", "")
+
+            # 获取该镜头应用的锚点
+            applied_anchors = shot.get("appliedAnchors", {"characters": [], "environments": []})
+
+            # 生成分镜图
+            first_frame_image = generate_storyboard_frame(
+                job_dir=job_dir,
+                job_id=job_id,
+                shot_id=shot_id,
+                t2i_prompt=t2i_prompt,
+                applied_anchors=applied_anchors,
+                identity_anchors=identity_anchors,
+                visual_style=visual_style
+            )
+
+            # 如果生成失败，回退到原始帧
+            if not first_frame_image:
+                frame_path = job_dir / "frames" / f"{shot_id}.png"
+                if frame_path.exists():
+                    first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
+
+            # 获取摄影参数
+            camera = shot.get("cameraPreserved", {})
+
+            # 构建视觉描述
+            visual_desc = shot.get("I2V_VideoGen", "") or t2i_prompt
+
+            # 添加 visual style 信息
+            style_notes = []
+            if visual_style.get("artStyle"):
+                style_notes.append(f"Style: {visual_style['artStyle']}")
+            if visual_style.get("lightingMood"):
+                style_notes.append(f"Lighting: {visual_style['lightingMood']}")
+            if style_notes:
+                visual_desc += f" [{', '.join(style_notes)}]"
+
+            # 计算时长
+            duration = shot.get("durationSeconds", 3.0)
+
+            storyboard_shot = {
+                "shotNumber": idx + 1,
+                "shotId": shot_id,
+                "firstFrameImage": first_frame_image,
+                "visualDescription": visual_desc,
+                "contentDescription": shot.get("remixNotes", "") or shot.get("beatTag", ""),
+                "startSeconds": 0,
+                "endSeconds": 0,
+                "durationSeconds": duration,
+                "shotSize": camera.get("shotSize", "MEDIUM"),
+                "cameraAngle": camera.get("cameraAngle", "eye-level"),
+                "cameraMovement": camera.get("cameraMovement", "static"),
+                "focalLengthDepth": camera.get("focalLengthDepth", ""),
+                "lighting": camera.get("lighting", ""),
+                "music": "",
+                "dialogueVoiceover": "",
+                "i2vPrompt": shot.get("I2V_VideoGen", ""),
+                "appliedAnchors": applied_anchors,
+            }
+
+            storyboard.append(storyboard_shot)
+
+        print(f"✅ [Storyboard] Generated {len(storyboard)} storyboard frames")
+
+    elif concrete_shots:
+        # ===== Fallback: 使用原始视频分析数据并生成新的分镜图 =====
+        is_using_original = True
+        print(f"📋 [Storyboard] No remixedLayer, generating from original analysis ({len(concrete_shots)} shots)")
+
+        for idx, shot in enumerate(concrete_shots):
+            shot_id = shot.get("shotId", f"shot_{idx + 1:02d}")
+
+            # 构建 prompt 从原始数据
+            t2i_prompt = shot.get("firstFrameDescription", "") or shot.get("visualDescription", "")
+
+            # 生成分镜图
+            first_frame_image = generate_storyboard_frame(
+                job_dir=job_dir,
+                job_id=job_id,
+                shot_id=shot_id,
+                t2i_prompt=t2i_prompt,
+                applied_anchors={"characters": [], "environments": []},
+                identity_anchors={},
+                visual_style=visual_style
+            )
+
+            # 如果生成失败，回退到原始帧
+            if not first_frame_image:
+                frame_path = job_dir / "frames" / f"{shot_id}.png"
+                if frame_path.exists():
+                    first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
+
+            # 从原始数据构建视觉描述
+            visual_desc = shot.get("visualDescription", "") or shot.get("firstFrameDescription", "")
+            if not visual_desc:
+                visual_desc = f"Shot {idx + 1}"
+
+            # 添加 visual style
+            style_notes = []
+            if visual_style.get("artStyle"):
+                style_notes.append(f"Style: {visual_style['artStyle']}")
+            if visual_style.get("lightingMood"):
+                style_notes.append(f"Lighting: {visual_style['lightingMood']}")
+            if style_notes:
+                visual_desc += f" [{', '.join(style_notes)}]"
+
+            # 计算时长
+            start_time = shot.get("startTime", 0)
+            end_time = shot.get("endTime", 0)
+            if isinstance(start_time, str):
+                start_time = parse_time_to_seconds(start_time)
+            if isinstance(end_time, str):
+                end_time = parse_time_to_seconds(end_time)
+            duration = end_time - start_time if end_time > start_time else 3
+
+            storyboard_shot = {
+                "shotNumber": idx + 1,
+                "shotId": shot_id,
+                "firstFrameImage": first_frame_image,
+                "visualDescription": visual_desc,
+                "contentDescription": shot.get("contentDescription", "") or shot.get("action", ""),
+                "startSeconds": float(start_time),
+                "endSeconds": float(end_time),
+                "durationSeconds": float(duration),
+                "shotSize": shot.get("shotSize", "MEDIUM"),
+                "cameraAngle": shot.get("cameraAngle", "eye-level"),
+                "cameraMovement": shot.get("cameraMovement", "static"),
+                "focalLengthDepth": shot.get("focalLengthDepth", ""),
+                "lighting": shot.get("lighting", ""),
+                "music": shot.get("music", ""),
+                "dialogueVoiceover": shot.get("dialogueVoiceover", "") or shot.get("dialogue", ""),
+                "i2vPrompt": visual_desc,
+                "appliedAnchors": {"characters": [], "environments": []},
+            }
+
+            storyboard.append(storyboard_shot)
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="No shot data available. Please complete video analysis first."
+        )
+
+    # 重新计算时间轴（仅对 remixed 数据需要）
+    if not is_using_original:
+        current_time = 0
+        for shot in storyboard:
+            shot["startSeconds"] = current_time
+            shot["endSeconds"] = current_time + shot["durationSeconds"]
+            current_time = shot["endSeconds"]
+
+    total_duration = storyboard[-1]["endSeconds"] if storyboard else 0
+
+    return {
+        "jobId": job_id,
+        "storyboard": storyboard,
+        "totalDuration": total_duration,
+        "isUsingOriginal": is_using_original,
+        "remixContext": {
+            "identityAnchors": identity_anchors,
+            "visualStyle": visual_style,
+            "shotCount": len(storyboard)
+        }
+    }
+
+
+class StoryboardChatRequest(BaseModel):
+    message: str
+    currentStoryboard: Optional[List[Dict[str, Any]]] = None
+
+
+@app.post("/api/job/{job_id}/storyboard/chat")
+async def storyboard_chat(job_id: str, request: StoryboardChatRequest):
+    """
+    Storyboard AI Chat
+
+    解析用户自然语言修改请求，更新分镜。
+    支持：
+    1. 参数修改（时长、镜头类型等）
+    2. AI 重新生成特定镜头的 prompt
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    client = genai.Client(api_key=api_key)
+
+    ir_manager = FilmIRManager(job_id)
+    remixed_layer = ir_manager.get_remixed_layer()
+
+    if not remixed_layer:
+        raise HTTPException(
+            status_code=400,
+            detail="No remixed layer available. Run remix first."
+        )
+
+    # 获取当前 storyboard 状态
+    current_storyboard = request.currentStoryboard or []
+    storyboard_summary = "\n".join([
+        f"Shot {s.get('shotNumber', i+1)}: {s.get('visualDescription', '')[:100]}... (duration: {s.get('durationSeconds', 3)}s)"
+        for i, s in enumerate(current_storyboard)
+    ])
+
+    # 获取 visual style 配置
+    render_strategy = ir_manager.ir.get("pillars", {}).get("IV_renderStrategy", {})
+    visual_style = render_strategy.get("visualStyleConfig", {})
+    style_context = f"Art Style: {visual_style.get('artStyle', 'Cinematic')}, Lighting: {visual_style.get('lightingMood', 'Natural')}"
+
+    # 构建解析 prompt
+    parse_prompt = f"""You are a professional film editor assistant. Analyze the user's request and determine what changes to make to the storyboard.
+
+CURRENT STORYBOARD:
+{storyboard_summary}
+
+VISUAL STYLE: {style_context}
+
+USER REQUEST: {request.message}
+
+Analyze the request and return a JSON object with:
+{{
+  "action": "parameter_change" | "regenerate_prompt" | "info_query",
+  "affectedShots": [list of shot numbers to modify],
+  "changes": {{
+    "durationSeconds": number or null,
+    "shotSize": string or null,
+    "cameraMovement": string or null,
+    "lighting": string or null,
+    "promptModification": string or null (description of what to change in the prompt)
+  }},
+  "response": "Natural language response to user explaining what will be done"
+}}
+
+Rules:
+1. If user says "时长加倍" or "make it longer", set durationSeconds to 2x current
+2. If user mentions specific shot numbers, only affect those
+3. If user wants visual changes (like "更暗" or "add sunglasses"), set action to "regenerate_prompt"
+4. Keep camera parameters from original unless explicitly requested to change
+
+Return ONLY the JSON object, no other text."""
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[parse_prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
+        )
+
+        # 解析 AI 响应
+        import json
+        result_text = response.text.strip()
+        if result_text.startswith("```"):
+            result_text = result_text.split("```")[1]
+            if result_text.startswith("json"):
+                result_text = result_text[4:]
+        result = json.loads(result_text)
+
+        action = result.get("action", "info_query")
+        affected_shots = result.get("affectedShots", [])
+        changes = result.get("changes", {})
+        ai_response = result.get("response", "I understand your request.")
+
+        # 应用修改
+        updated_storyboard = []
+        remixed_shots = remixed_layer.get("shots", [])
+
+        for shot in current_storyboard:
+            shot_num = shot.get("shotNumber", 0)
+            new_shot = shot.copy()
+
+            if shot_num in affected_shots:
+                # 应用参数修改
+                if changes.get("durationSeconds"):
+                    if changes["durationSeconds"] == "2x":
+                        new_shot["durationSeconds"] = shot.get("durationSeconds", 3) * 2
+                    else:
+                        new_shot["durationSeconds"] = changes["durationSeconds"]
+
+                if changes.get("shotSize"):
+                    new_shot["shotSize"] = changes["shotSize"]
+
+                if changes.get("cameraMovement"):
+                    new_shot["cameraMovement"] = changes["cameraMovement"]
+
+                if changes.get("lighting"):
+                    new_shot["lighting"] = changes["lighting"]
+
+                # 如果需要重新生成 prompt
+                if action == "regenerate_prompt" and changes.get("promptModification"):
+                    # 调用 AI 重新生成该镜头的 prompt
+                    shot_id = shot.get("shotId", f"shot_{shot_num:02d}")
+                    original_prompt = shot.get("i2vPrompt", shot.get("visualDescription", ""))
+
+                    regen_prompt = f"""You are a professional cinematographer. Modify this shot description based on the user's request.
+
+ORIGINAL PROMPT: {original_prompt}
+VISUAL STYLE: {style_context}
+MODIFICATION REQUEST: {changes['promptModification']}
+
+Generate an updated cinematic prompt that incorporates the requested changes while maintaining:
+1. The same camera parameters (shot size, angle, movement)
+2. The same character identities
+3. Professional cinematic quality
+
+Return ONLY the new prompt text, no other explanation."""
+
+                    regen_response = client.models.generate_content(
+                        model="gemini-2.0-flash",
+                        contents=[regen_prompt]
+                    )
+                    new_prompt = regen_response.text.strip()
+                    new_shot["i2vPrompt"] = new_prompt
+                    new_shot["visualDescription"] = new_prompt
+
+                    # 更新 Film IR 中的 remixed shot
+                    for rs in remixed_shots:
+                        if rs.get("shotId") == shot_id:
+                            rs["subject"] = new_prompt
+                            rs["remixedI2VPrompt"] = new_prompt
+                            break
+
+            updated_storyboard.append(new_shot)
+
+        # 重新计算时间轴
+        current_time = 0
+        for shot in updated_storyboard:
+            shot["startSeconds"] = current_time
+            shot["endSeconds"] = current_time + shot["durationSeconds"]
+            current_time = shot["endSeconds"]
+
+        # 如果有 prompt 修改，保存更新后的 Film IR
+        if action == "regenerate_prompt":
+            ir_manager.ir["pillars"]["III_shotRecipe"]["remixed"]["shots"] = remixed_shots
+            ir_manager.save()
+
+        return {
+            "updatedStoryboard": updated_storyboard,
+            "affectedShots": affected_shots,
+            "response": ai_response,
+            "action": action,
+            "totalDuration": current_time
+        }
+
+    except Exception as e:
+        print(f"❌ Storyboard chat error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
+
+
+# ============================================================
 # M5: Asset Generation API
 # ============================================================
 

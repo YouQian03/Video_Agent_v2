@@ -7,6 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   User,
   MapPin,
   Upload,
@@ -18,7 +26,8 @@ import {
   Loader2,
   Music,
   Palette,
-  Package
+  Package,
+  AlertTriangle
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -1668,6 +1677,48 @@ export function CharacterSceneViews({
 
   const hasAnyContent = characters.length > 0 || scenes.length > 0
 
+  // Confirmation Dialog State
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+
+  // Calculate what has been modified (has three-views generated)
+  const getModificationStatus = () => {
+    const modifiedCharacters = characters.filter(c => c.frontView || c.sideView || c.backView)
+    const unmodifiedCharacters = characters.filter(c => !c.frontView && !c.sideView && !c.backView)
+    const modifiedScenes = scenes.filter(s => s.establishingShot || s.detailView || s.alternateAngle)
+    const unmodifiedScenes = scenes.filter(s => !s.establishingShot && !s.detailView && !s.alternateAngle)
+    const modifiedProducts = products.filter(p => p.frontView || p.sideView || p.backView)
+    const unmodifiedProducts = products.filter(p => !p.frontView && !p.sideView && !p.backView)
+
+    const totalModified = modifiedCharacters.length + modifiedScenes.length + modifiedProducts.length
+    const totalUnmodified = unmodifiedCharacters.length + unmodifiedScenes.length + unmodifiedProducts.length
+
+    return {
+      modifiedCharacters,
+      unmodifiedCharacters,
+      modifiedScenes,
+      unmodifiedScenes,
+      modifiedProducts,
+      unmodifiedProducts,
+      totalModified,
+      totalUnmodified,
+      hasUnmodified: totalUnmodified > 0
+    }
+  }
+
+  const handleGenerateStoryboard = () => {
+    const status = getModificationStatus()
+    if (status.hasUnmodified) {
+      setShowConfirmDialog(true)
+    } else {
+      onConfirm()
+    }
+  }
+
+  const handleConfirmAndGenerate = () => {
+    setShowConfirmDialog(false)
+    onConfirm()
+  }
+
   return (
     <div className="space-y-8">
       {/* Introduction */}
@@ -1795,24 +1846,74 @@ export function CharacterSceneViews({
           Back to Script
         </Button>
         <div className="flex-1" />
-        {!allConfirmed && hasAnyContent && (
-          <Button
-            variant="outline"
-            onClick={onConfirm}
-            className="border-border text-foreground hover:bg-secondary bg-transparent"
-          >
-            Skip & Generate Storyboard
-          </Button>
-        )}
         <Button
-          onClick={onConfirm}
-          disabled={!hasAnyContent}
+          onClick={handleGenerateStoryboard}
           className="bg-accent text-accent-foreground hover:bg-accent/90"
         >
-          <Check className="w-4 h-4 mr-2" />
-          {allConfirmed ? "Confirm & Generate Storyboard" : "Confirm Views"}
+          <Sparkles className="w-4 h-4 mr-2" />
+          Generate Storyboard
         </Button>
       </div>
+
+      {/* Confirmation Dialog for Unmodified Assets */}
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              Some Assets Not Modified
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="text-left pt-2 text-sm text-muted-foreground">
+                {(() => {
+                  const status = getModificationStatus()
+                  const unmodifiedItems: string[] = []
+                  if (status.unmodifiedCharacters.length > 0) {
+                    unmodifiedItems.push(`${status.unmodifiedCharacters.length} character(s)`)
+                  }
+                  if (status.unmodifiedScenes.length > 0) {
+                    unmodifiedItems.push(`${status.unmodifiedScenes.length} scene(s)`)
+                  }
+                  if (status.unmodifiedProducts.length > 0) {
+                    unmodifiedItems.push(`${status.unmodifiedProducts.length} product(s)`)
+                  }
+                  return (
+                    <>
+                      <div className="mb-2">
+                        The following assets have not been modified:
+                      </div>
+                      <ul className="list-disc list-inside mb-3 text-foreground">
+                        {unmodifiedItems.map((item, idx) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                      <div className="text-yellow-600 dark:text-yellow-400 font-medium">
+                        Unmodified assets will reference the original video content.
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirmDialog(false)}
+              className="border-border text-foreground hover:bg-secondary bg-transparent"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmAndGenerate}
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+            >
+              <Check className="w-4 h-4 mr-2" />
+              Confirm and Generate
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
