@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/componen
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Send, Bot, User, Edit3, Check, Loader2, AlertCircle } from "lucide-react"
+import { Send, Bot, User, Edit3, Check, Loader2, AlertCircle, RefreshCw, ImageIcon } from "lucide-react"
 import type { StoryboardShot } from "@/lib/types/remix"
-import { storyboardChat, type RemixStoryboardShot } from "@/lib/api"
+import { storyboardChat, regenerateStoryboardFrames, type RemixStoryboardShot } from "@/lib/api"
 
 interface Message {
   id: string
@@ -38,7 +38,9 @@ export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfir
   ])
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isRegenerating, setIsRegenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [pendingRegenerationShots, setPendingRegenerationShots] = useState<number[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -130,6 +132,8 @@ export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfir
       if (result.affectedShots.length > 0 && result.updatedStoryboard) {
         const updatedShots = convertFromRemixFormat(result.updatedStoryboard)
         onUpdateStoryboard(updatedShots)
+        // Track affected shots for potential regeneration
+        setPendingRegenerationShots(result.affectedShots)
       }
 
     } catch (err) {
@@ -154,6 +158,60 @@ export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfir
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       handleSend()
+    }
+  }
+
+  // Regenerate storyboard frames for affected shots
+  const handleRegenerateFrames = async () => {
+    if (pendingRegenerationShots.length === 0 || isRegenerating) return
+
+    setIsRegenerating(true)
+    setError(null)
+
+    try {
+      // Get shots that need regeneration
+      const shotsToRegenerate = convertToRemixFormat(
+        storyboard.filter(shot => pendingRegenerationShots.includes(shot.shotNumber))
+      )
+
+      console.log("🖼️ Regenerating frames for shots:", pendingRegenerationShots)
+      const result = await regenerateStoryboardFrames(jobId, shotsToRegenerate)
+      console.log("✅ Frames regenerated:", result.count)
+
+      // Update storyboard with new frame images
+      if (result.regeneratedShots && result.regeneratedShots.length > 0) {
+        const updatedShots = storyboard.map(shot => {
+          const regenerated = result.regeneratedShots.find(r => r.shotNumber === shot.shotNumber)
+          if (regenerated) {
+            return {
+              ...shot,
+              firstFrameImage: regenerated.firstFrameImage,
+            }
+          }
+          return shot
+        })
+        onUpdateStoryboard(updatedShots)
+      }
+
+      // Clear pending regeneration shots
+      setPendingRegenerationShots([])
+
+      // Add success message
+      const successMessage: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: `✅ Successfully regenerated ${result.count} storyboard frame(s). The preview images have been updated.`,
+        affectedShots: pendingRegenerationShots,
+        timestamp: new Date(),
+      }
+      setMessages((prev) => [...prev, successMessage])
+
+    } catch (err) {
+      console.error("❌ Frame regeneration error:", err)
+      const errorMessage = err instanceof Error ? err.message : "Failed to regenerate frames"
+      setError(errorMessage)
+    } finally {
+      setIsRegenerating(false)
     }
   }
 
@@ -260,12 +318,34 @@ export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfir
           </Button>
         </div>
       </CardContent>
-      <CardFooter className="pt-4 border-t border-border">
+      <CardFooter className="pt-4 border-t border-border flex flex-col gap-3">
+        {/* Regenerate Frames Button - shows when there are pending modifications */}
+        {pendingRegenerationShots.length > 0 && (
+          <Button
+            onClick={handleRegenerateFrames}
+            variant="outline"
+            className="w-full border-accent text-accent hover:bg-accent/10"
+            size="lg"
+            disabled={isProcessing || isRegenerating}
+          >
+            {isRegenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Regenerating {pendingRegenerationShots.length} Frame(s)...
+              </>
+            ) : (
+              <>
+                <ImageIcon className="w-4 h-4 mr-2" />
+                Regenerate Frames ({pendingRegenerationShots.length} shot{pendingRegenerationShots.length > 1 ? 's' : ''} modified)
+              </>
+            )}
+          </Button>
+        )}
         <Button
           onClick={onConfirm}
           className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
           size="lg"
-          disabled={isProcessing}
+          disabled={isProcessing || isRegenerating}
         >
           <Check className="w-4 h-4 mr-2" />
           Confirm Storyboard & Generate Video

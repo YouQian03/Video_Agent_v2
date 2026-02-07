@@ -8,6 +8,9 @@ import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import { saveShotToLibrary } from "@/lib/asset-storage"
 import type { StoryboardShot } from "@/lib/types/remix"
 
+// API base URL for image loading
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+
 interface StoryboardTableProps {
   data: StoryboardShot[]
   title?: string
@@ -84,9 +87,13 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                       <div className="w-16 h-12 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
                         {shot.firstFrameImage ? (
                           <img
-                            src={shot.firstFrameImage || "/placeholder.svg"}
+                            src={shot.firstFrameImage.startsWith("http") ? shot.firstFrameImage : `${API_BASE_URL}${shot.firstFrameImage}`}
                             alt={`Shot ${shot.shotNumber}`}
                             className="w-full h-full object-cover rounded"
+                            onError={(e) => {
+                              // 图片加载失败时显示占位符
+                              (e.target as HTMLImageElement).style.display = 'none'
+                            }}
                           />
                         ) : (
                           "-"

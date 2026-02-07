@@ -394,6 +394,10 @@ async def get_storyboard_socialsaver(job_id: str):
                             "stylized_frame": None,
                             "video": None
                         },
+                        "status": {
+                            "stylize": "NOT_STARTED",
+                            "video_generate": "NOT_STARTED"
+                        },
                         "cinematography": {
                             "shot_scale": ir_shot.get("shotScale", ""),
                             "camera_type": ir_shot.get("cameraMovement", ""),
@@ -856,6 +860,8 @@ def generate_storyboard_frame(
     print(f"🎨 [Storyboard] Generating {shot_id} with prompt: {final_prompt[:100]}...")
 
     try:
+        import concurrent.futures
+
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             print(f"   ❌ GEMINI_API_KEY not set")
@@ -863,17 +869,22 @@ def generate_storyboard_frame(
 
         client = genai.Client(api_key=api_key)
 
-        # 使用 generate_content 配合 response_modalities=['IMAGE']
-        # 这是与 asset_generator.py 相同的方法
-        config = types.GenerateContentConfig(
-            response_modalities=['IMAGE'],
-        )
+        # 使用 ThreadPoolExecutor 添加超时机制，防止 API 无限阻塞
+        def call_gemini():
+            # 使用 gemini-2.5-flash-image 图像生成模型
+            return client.models.generate_content(
+                model="gemini-2.5-flash-image",  # Gemini 2.0 Flash Exp
+                contents=[final_prompt],
+            )
 
-        response = client.models.generate_content(
-            model="gemini-3-pro-image-preview",  # 与 asset_generator 相同的模型
-            contents=[final_prompt],
-            config=config
-        )
+        TIMEOUT_SECONDS = 120  # 2分钟超时
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(call_gemini)
+            try:
+                response = future.result(timeout=TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
+                return ""
 
         # 提取生成的图片
         for part in response.candidates[0].content.parts:
@@ -973,10 +984,15 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             # 计算时长
             duration = shot.get("durationSeconds", 3.0)
 
+            # 添加时间戳防止浏览器缓存
+            import time
+            cache_buster = int(time.time() * 1000)
+            first_frame_with_cache = f"{first_frame_image}?t={cache_buster}" if first_frame_image else ""
+
             storyboard_shot = {
                 "shotNumber": idx + 1,
                 "shotId": shot_id,
-                "firstFrameImage": first_frame_image,
+                "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
                 "contentDescription": shot.get("remixNotes", "") or shot.get("beatTag", ""),
                 "startSeconds": 0,
@@ -1048,10 +1064,15 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                 end_time = parse_time_to_seconds(end_time)
             duration = end_time - start_time if end_time > start_time else 3
 
+            # 添加时间戳防止浏览器缓存
+            import time
+            cache_buster = int(time.time() * 1000)
+            first_frame_with_cache = f"{first_frame_image}?t={cache_buster}" if first_frame_image else ""
+
             storyboard_shot = {
                 "shotNumber": idx + 1,
                 "shotId": shot_id,
-                "firstFrameImage": first_frame_image,
+                "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
                 "contentDescription": shot.get("contentDescription", "") or shot.get("action", ""),
                 "startSeconds": float(start_time),
@@ -1270,8 +1291,10 @@ Return ONLY the new prompt text, no other explanation."""
 
         # 如果有 prompt 修改，保存更新后的 Film IR
         if action == "regenerate_prompt":
-            ir_manager.ir["pillars"]["III_shotRecipe"]["remixed"]["shots"] = remixed_shots
-            ir_manager.save()
+            # remixedLayer 在 userIntent 下，不在 pillars 下
+            if ir_manager.ir.get("userIntent", {}).get("remixedLayer"):
+                ir_manager.ir["userIntent"]["remixedLayer"]["shots"] = remixed_shots
+                ir_manager.save()
 
         return {
             "updatedStoryboard": updated_storyboard,
@@ -1286,6 +1309,81 @@ Return ONLY the new prompt text, no other explanation."""
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
+
+
+class RegenerateFramesRequest(BaseModel):
+    shots: List[Dict[str, Any]]  # 要重新生成的分镜数据
+
+
+@app.post("/api/job/{job_id}/storyboard/regenerate-frames")
+async def regenerate_storyboard_frames(job_id: str, request: RegenerateFramesRequest):
+    """
+    重新生成指定分镜的首帧图片
+
+    根据更新后的 prompt 重新生成分镜图，让用户在生成视频前预览效果。
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # 获取 visual style 配置
+    render_strategy = ir_manager.ir.get("pillars", {}).get("IV_renderStrategy", {})
+    visual_style = render_strategy.get("visualStyleConfig", {})
+
+    # 获取 identity anchors
+    remixed_layer = ir_manager.get_remixed_layer()
+    identity_anchors = remixed_layer.get("identityAnchors", {}) if remixed_layer else {}
+
+    regenerated_shots = []
+
+    print(f"🎨 [Regenerate] Starting to regenerate {len(request.shots)} frames...")
+
+    for shot in request.shots:
+        shot_id = shot.get("shotId", "")
+        shot_number = shot.get("shotNumber", 0)
+
+        # 使用更新后的 prompt
+        t2i_prompt = shot.get("i2vPrompt", "") or shot.get("visualDescription", "")
+
+        # 获取该镜头应用的锚点
+        applied_anchors = shot.get("appliedAnchors", {"characters": [], "environments": []})
+
+        print(f"   🖼️ Regenerating {shot_id}...")
+
+        # 调用图像生成函数
+        new_image_path = generate_storyboard_frame(
+            job_dir=job_dir,
+            job_id=job_id,
+            shot_id=shot_id,
+            t2i_prompt=t2i_prompt,
+            applied_anchors=applied_anchors,
+            identity_anchors=identity_anchors,
+            visual_style=visual_style
+        )
+
+        # 如果生成失败，回退到原始帧
+        if not new_image_path:
+            frame_path = job_dir / "frames" / f"{shot_id}.png"
+            if frame_path.exists():
+                new_image_path = f"/assets/{job_id}/frames/{shot_id}.png"
+                print(f"   ⚠️ Fallback to original frame for {shot_id}")
+
+        # 更新 shot 数据，添加时间戳防止浏览器缓存
+        import time
+        cache_buster = int(time.time() * 1000)
+        updated_shot = shot.copy()
+        updated_shot["firstFrameImage"] = f"{new_image_path}?t={cache_buster}" if new_image_path else ""
+        regenerated_shots.append(updated_shot)
+
+    print(f"✅ [Regenerate] Completed {len(regenerated_shots)} frames")
+
+    return {
+        "jobId": job_id,
+        "regeneratedShots": regenerated_shots,
+        "count": len(regenerated_shots)
+    }
 
 
 # ============================================================
