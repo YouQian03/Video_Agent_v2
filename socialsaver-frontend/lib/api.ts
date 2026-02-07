@@ -905,3 +905,365 @@ export async function pollGenerateViewsStatus(
 
   throw new Error("Generation polling timeout");
 }
+
+// ============================================================
+// Visual Style API (视觉风格配置)
+// ============================================================
+
+export interface VisualStyleConfig {
+  artStyle: string;
+  colorPalette: string;
+  lightingMood: string;
+  cameraStyle: string;
+  referenceImages: string[];
+  confirmed: boolean;
+}
+
+export interface VisualStyleResponse {
+  jobId: string;
+  visualStyle: VisualStyleConfig;
+}
+
+/**
+ * 获取视觉风格配置
+ */
+export async function getVisualStyle(jobId: string): Promise<VisualStyleResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/visual-style`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      // Return default empty config if not found
+      return {
+        jobId,
+        visualStyle: {
+          artStyle: "",
+          colorPalette: "",
+          lightingMood: "",
+          cameraStyle: "",
+          referenceImages: [],
+          confirmed: false,
+        },
+      };
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch visual style" }));
+    throw new Error(error.detail || "Failed to fetch visual style");
+  }
+
+  return response.json();
+}
+
+/**
+ * 保存视觉风格配置
+ */
+export async function saveVisualStyle(
+  jobId: string,
+  config: Partial<VisualStyleConfig>
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/visual-style`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to save visual style" }));
+    throw new Error(error.detail || "Failed to save visual style");
+  }
+
+  return response.json();
+}
+
+/**
+ * 上传视觉参考图片
+ */
+export async function uploadReferenceImage(
+  jobId: string,
+  file: File
+): Promise<{ status: string; url: string; index: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/visual-style/reference`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to upload reference image" }));
+    throw new Error(error.detail || "Failed to upload reference image");
+  }
+
+  const result = await response.json();
+  // Convert relative URL to full URL
+  if (result.url && result.url.startsWith("/")) {
+    result.url = `${API_BASE_URL}${result.url}`;
+  }
+  return result;
+}
+
+/**
+ * 删除视觉参考图片
+ */
+export async function deleteReferenceImage(
+  jobId: string,
+  index: number
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/visual-style/reference/${index}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to delete reference image" }));
+    throw new Error(error.detail || "Failed to delete reference image");
+  }
+
+  return response.json();
+}
+
+// ============================================================
+// Product Three-Views API (产品三视图)
+// ============================================================
+
+export interface ProductThreeViews {
+  front: string | null;
+  side: string | null;
+  back: string | null;
+}
+
+export interface ProductAnchor {
+  anchorId: string;
+  name: string;
+  description: string;
+  threeViews: ProductThreeViews;
+  status: "NOT_STARTED" | "GENERATING" | "SUCCESS" | "FAILED";
+}
+
+export interface ProductsResponse {
+  jobId: string;
+  products: ProductAnchor[];
+}
+
+export interface ProductStateResponse {
+  jobId: string;
+  anchorId: string;
+  name: string;
+  description: string;
+  threeViews: {
+    front: { url: string | null; status: string };
+    side: { url: string | null; status: string };
+    back: { url: string | null; status: string };
+  };
+  generationStatus: string;
+}
+
+export interface ProductGenerationStatusResponse {
+  anchorId: string;
+  status: "not_started" | "running" | "completed" | "failed";
+  started_at?: string;
+  completed_at?: string;
+  results?: {
+    [view: string]: {
+      status: string;
+      path: string | null;
+    };
+  };
+  error?: string;
+}
+
+/**
+ * 获取所有产品列表
+ */
+export async function getProducts(jobId: string): Promise<ProductsResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return { jobId, products: [] };
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch products" }));
+    throw new Error(error.detail || "Failed to fetch products");
+  }
+
+  return response.json();
+}
+
+/**
+ * 创建新产品
+ */
+export async function createProduct(
+  jobId: string,
+  name: string,
+  description: string
+): Promise<{ status: string; product: ProductAnchor }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name, description }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to create product" }));
+    throw new Error(error.detail || "Failed to create product");
+  }
+
+  return response.json();
+}
+
+/**
+ * 更新产品信息
+ */
+export async function updateProduct(
+  jobId: string,
+  anchorId: string,
+  data: { name?: string; description?: string }
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to update product" }));
+    throw new Error(error.detail || "Failed to update product");
+  }
+
+  return response.json();
+}
+
+/**
+ * 删除产品
+ */
+export async function deleteProduct(
+  jobId: string,
+  anchorId: string
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to delete product" }));
+    throw new Error(error.detail || "Failed to delete product");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取产品详细状态
+ */
+export async function getProductState(jobId: string, anchorId: string): Promise<ProductStateResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch product state" }));
+    throw new Error(error.detail || "Failed to fetch product state");
+  }
+
+  return response.json();
+}
+
+/**
+ * 上传产品视图图片
+ */
+export async function uploadProductView(
+  jobId: string,
+  anchorId: string,
+  view: "front" | "side" | "back",
+  file: File
+): Promise<{ status: string; anchorId: string; view: string; filePath: string; url: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}/upload/${view}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to upload product view" }));
+    throw new Error(error.detail || "Failed to upload product view");
+  }
+
+  const result = await response.json();
+  // Convert relative URL to full URL
+  if (result.url && result.url.startsWith("/")) {
+    result.url = `${API_BASE_URL}${result.url}`;
+  }
+  return result;
+}
+
+/**
+ * AI 生成产品三视图
+ */
+export async function generateProductViews(
+  jobId: string,
+  anchorId: string,
+  force: boolean = false
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}/generate-views`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ force }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to generate product views" }));
+    throw new Error(error.detail || "Failed to generate product views");
+  }
+
+  return response.json();
+}
+
+/**
+ * 获取产品生成状态 (使用通用的生成状态端点)
+ */
+export async function getProductGenerationStatus(
+  jobId: string,
+  anchorId: string
+): Promise<ProductGenerationStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-views/${anchorId}/status`);
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch product generation status" }));
+    throw new Error(error.detail || "Failed to fetch product generation status");
+  }
+
+  return response.json();
+}
+
+/**
+ * 轮询产品生成状态直到完成
+ */
+export async function pollProductGenerationStatus(
+  jobId: string,
+  anchorId: string,
+  onUpdate: (status: ProductGenerationStatusResponse) => void,
+  intervalMs: number = 3000,
+  maxAttempts: number = 40
+): Promise<ProductGenerationStatusResponse> {
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const status = await getProductGenerationStatus(jobId, anchorId);
+    onUpdate(status);
+
+    if (status.status === "completed" || status.status === "failed") {
+      return status;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    attempts++;
+  }
+
+  throw new Error("Product generation polling timeout");
+}

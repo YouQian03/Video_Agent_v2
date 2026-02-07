@@ -1,14 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
@@ -23,12 +15,17 @@ interface StoryboardTableProps {
 }
 
 export function StoryboardTable({ data, title = "Storyboard Breakdown", showSaveButtons = true }: StoryboardTableProps) {
-  // Debug: Log each shot's image URL
-  console.log("🎬 StoryboardTable data:", data?.map(s => ({
-    shotNumber: s.shotNumber,
-    image: s.firstFrameImage,
-    startSec: s.startSeconds
-  })))
+  // Format time to avoid floating point precision issues
+  const formatTime = (seconds: number): string => {
+    if (seconds === undefined || seconds === null) return "-"
+    return `${Math.round(seconds * 10) / 10}s`
+  }
+
+  // Safe string accessor that handles N/A and empty values
+  const safeStr = (val: any): string => {
+    if (!val || val === "N/A" || val === "n/a" || val === "NA") return "-"
+    return String(val)
+  }
 
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [selectedShot, setSelectedShot] = useState<StoryboardShot | null>(null)
@@ -59,79 +56,78 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
 
   return (
     <>
-      <Card className="bg-card border-border">
+      <Card className="bg-card border-border w-full max-w-full">
         <CardHeader>
           <CardTitle className="text-foreground">{title}</CardTitle>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border">
-                <TableHead className="text-muted-foreground whitespace-nowrap">Shot Number</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">First Frame Image</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap min-w-[200px]">Visual Description</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap min-w-[200px]">Content Description</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Start Seconds</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">End Second</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Duration Seconds</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Shot Size</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Camera Angle</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Camera Movement</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Focal Length & Depth of Field</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Lighting</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap">Music</TableHead>
-                <TableHead className="text-muted-foreground whitespace-nowrap min-w-[150px]">Dialogue & Voice-over</TableHead>
-                {showSaveButtons && (
-                  <TableHead className="text-muted-foreground whitespace-nowrap">Actions</TableHead>
-                )}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.map((shot) => (
-                <TableRow key={shot.shotNumber} className="border-border">
-                  <TableCell className="text-foreground font-medium">{shot.shotNumber}</TableCell>
-                  <TableCell>
-                    <div className="w-24 h-16 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground">
-                      {shot.firstFrameImage ? (
-                        <img
-                          src={shot.firstFrameImage || "/placeholder.svg"}
-                          alt={`Shot ${shot.shotNumber}`}
-                          className="w-full h-full object-cover rounded"
-                        />
-                      ) : (
-                        "Placeholder"
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.visualDescription || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.contentDescription || "-"}</TableCell>
-                  <TableCell className="text-foreground">{shot.startSeconds}s</TableCell>
-                  <TableCell className="text-foreground">{shot.endSeconds}s</TableCell>
-                  <TableCell className="text-foreground">{shot.durationSeconds}s</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.shotSize || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.cameraAngle || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.cameraMovement || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.focalLengthDepth || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.lighting || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.music || "-"}</TableCell>
-                  <TableCell className="text-foreground text-sm">{shot.dialogueVoiceover || "-"}</TableCell>
+        <CardContent className="p-0">
+          <div className="overflow-hidden">
+            <table className="w-full border-collapse text-sm table-fixed">
+              <thead>
+                <tr className="border-b border-border bg-secondary/30">
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "50px"}}>#</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "90px"}}>Frame</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium">Visual Description</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium">Content Description</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "100px"}}>Time</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "120px"}}>Camera</th>
                   {showSaveButtons && (
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleSaveShot(shot)}
-                        className="gap-1 text-accent hover:text-accent hover:bg-accent/10"
-                      >
-                        <FolderOpen className="w-4 h-4" />
-                        Save
-                      </Button>
-                    </TableCell>
+                    <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "70px"}}>Save</th>
                   )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((shot) => (
+                  <tr key={shot.shotNumber} className="border-b border-border hover:bg-secondary/20">
+                    <td className="text-foreground font-medium p-3 align-top">{shot.shotNumber}</td>
+                    <td className="p-3 align-top">
+                      <div className="w-16 h-12 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
+                        {shot.firstFrameImage ? (
+                          <img
+                            src={shot.firstFrameImage || "/placeholder.svg"}
+                            alt={`Shot ${shot.shotNumber}`}
+                            className="w-full h-full object-cover rounded"
+                          />
+                        ) : (
+                          "-"
+                        )}
+                      </div>
+                    </td>
+                    <td className="text-foreground p-3 align-top">
+                      <div className="break-words whitespace-normal">{safeStr(shot.visualDescription)}</div>
+                    </td>
+                    <td className="text-foreground p-3 align-top">
+                      <div className="break-words whitespace-normal">{safeStr(shot.contentDescription)}</div>
+                    </td>
+                    <td className="text-foreground p-3 align-top">
+                      <div>{formatTime(shot.startSeconds)} - {formatTime(shot.endSeconds)}</div>
+                      <div className="text-muted-foreground text-xs">({formatTime(shot.durationSeconds)})</div>
+                    </td>
+                    <td className="text-foreground p-3 align-top">
+                      <div className="break-words whitespace-normal">
+                        {safeStr(shot.shotSize)}
+                        {shot.cameraMovement && shot.cameraMovement !== "-" && shot.cameraMovement !== "N/A" && (
+                          <span className="text-muted-foreground"> / {safeStr(shot.cameraMovement)}</span>
+                        )}
+                      </div>
+                    </td>
+                    {showSaveButtons && (
+                      <td className="p-3 align-top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSaveShot(shot)}
+                          className="h-8 px-2 text-accent hover:text-accent hover:bg-accent/10"
+                        >
+                          <FolderOpen className="w-4 h-4" />
+                        </Button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 

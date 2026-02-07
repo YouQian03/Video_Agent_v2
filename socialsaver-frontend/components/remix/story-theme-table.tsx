@@ -1,14 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
@@ -28,73 +20,82 @@ export function StoryThemeTable({ data, showSaveButton = true }: StoryThemeTable
     saveThemeToLibrary(name, tags, data)
   }
 
+  // Safe accessor to handle missing nested properties and N/A values
+  const get = (obj: any, path: string): string => {
+    const value = path.split('.').reduce((acc, part) => acc?.[part], obj)
+    if (!value || value === "N/A" || value === "n/a" || value === "NA") {
+      return "-"
+    }
+    return value
+  }
+
   const rows = [
     {
       category: "Basic Info",
       items: [
-        { label: "Title / Type / Duration", value: `${data.basicInfo.title} / ${data.basicInfo.type} / ${data.basicInfo.duration}` },
-        { label: "Creator / Director", value: data.basicInfo.creator },
-        { label: "Creative Background (optional)", value: data.basicInfo.background },
+        { label: "Title / Type / Duration", value: `${get(data, "basicInfo.title")} / ${get(data, "basicInfo.type")} / ${get(data, "basicInfo.duration")}` },
+        { label: "Creator / Director", value: get(data, "basicInfo.creator") },
+        { label: "Creative Background", value: get(data, "basicInfo.background") },
       ],
     },
     {
       category: "Core Theme",
       items: [
-        { label: "Theme Summary (one sentence)", value: data.coreTheme.summary },
-        { label: "Theme Keywords", value: data.coreTheme.keywords },
+        { label: "Theme Summary", value: get(data, "coreTheme.summary") },
+        { label: "Theme Keywords", value: get(data, "coreTheme.keywords") },
       ],
     },
     {
       category: "Narrative Content",
       items: [
-        { label: "Story Starting Point", value: data.narrative.startingPoint },
-        { label: "Core Conflict", value: data.narrative.coreConflict },
-        { label: "Climax Segment", value: data.narrative.climax },
-        { label: "Ending Method", value: data.narrative.ending },
+        { label: "Story Starting Point", value: get(data, "narrative.startingPoint") },
+        { label: "Core Conflict", value: get(data, "narrative.coreConflict") },
+        { label: "Climax Segment", value: get(data, "narrative.climax") },
+        { label: "Ending Method", value: get(data, "narrative.ending") },
       ],
     },
     {
       category: "Narrative Structure",
       items: [
-        { label: "Narrative Method", value: data.narrativeStructure.narrativeMethod },
-        { label: "Time Structure", value: data.narrativeStructure.timeStructure },
+        { label: "Narrative Method", value: get(data, "narrativeStructure.narrativeMethod") },
+        { label: "Time Structure", value: get(data, "narrativeStructure.timeStructure") },
       ],
     },
     {
       category: "Character Analysis",
       items: [
-        { label: "Protagonist", value: data.characterAnalysis.protagonist },
-        { label: "Character Change", value: data.characterAnalysis.characterChange },
-        { label: "Character Relationships", value: data.characterAnalysis.relationships },
+        { label: "Protagonist", value: get(data, "characterAnalysis.protagonist") },
+        { label: "Character Change", value: get(data, "characterAnalysis.characterChange") },
+        { label: "Character Relationships", value: get(data, "characterAnalysis.relationships") },
       ],
     },
     {
       category: "Audio-Visual Language",
       items: [
-        { label: "Visual Style", value: data.audioVisual.visualStyle },
-        { label: "Camera Language", value: data.audioVisual.cameraLanguage },
-        { label: "Sound Design", value: data.audioVisual.soundDesign },
+        { label: "Visual Style", value: get(data, "audioVisual.visualStyle") },
+        { label: "Camera Language", value: get(data, "audioVisual.cameraLanguage") },
+        { label: "Sound Design", value: get(data, "audioVisual.soundDesign") },
       ],
     },
     {
       category: "Symbolism & Metaphor",
       items: [
-        { label: "Repeating Imagery", value: data.symbolism.repeatingImagery },
-        { label: "Symbolic Meaning", value: data.symbolism.symbolicMeaning },
+        { label: "Repeating Imagery", value: get(data, "symbolism.repeatingImagery") },
+        { label: "Symbolic Meaning", value: get(data, "symbolism.symbolicMeaning") },
       ],
     },
     {
       category: "Thematic Stance",
       items: [
-        { label: "Creator Attitude", value: data.thematicStance.creatorAttitude },
-        { label: "Emotional Tone", value: data.thematicStance.emotionalTone },
+        { label: "Creator Attitude", value: get(data, "thematicStance.creatorAttitude") },
+        { label: "Emotional Tone", value: get(data, "thematicStance.emotionalTone") },
       ],
     },
     {
       category: "Real-World Significance",
       items: [
-        { label: "Social/Emotional Value", value: data.realWorldSignificance.socialEmotionalValue },
-        { label: "Audience Interpretation (optional)", value: data.realWorldSignificance.audienceInterpretation },
+        { label: "Social/Emotional Value", value: get(data, "realWorldSignificance.socialEmotionalValue") },
+        { label: "Audience Interpretation", value: get(data, "realWorldSignificance.audienceInterpretation") },
       ],
     },
   ]
@@ -116,34 +117,36 @@ export function StoryThemeTable({ data, showSaveButton = true }: StoryThemeTable
             </Button>
           )}
         </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border">
-                <TableHead className="w-[180px] text-muted-foreground">Analysis Dimension</TableHead>
-                <TableHead className="w-[200px] text-muted-foreground">Analysis Points</TableHead>
-                <TableHead className="text-muted-foreground">Content</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((section) =>
-                section.items.map((item, itemIndex) => (
-                  <TableRow key={`${section.category}-${itemIndex}`} className="border-border">
-                    {itemIndex === 0 && (
-                      <TableCell
-                        rowSpan={section.items.length}
-                        className="font-medium text-foreground align-top bg-secondary/30"
-                      >
-                        {section.category}
-                      </TableCell>
-                    )}
-                    <TableCell className="text-muted-foreground">{item.label}</TableCell>
-                    <TableCell className="text-foreground">{item.value || "-"}</TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+        <CardContent className="p-0">
+          <div className="overflow-hidden">
+            <table className="w-full border-collapse text-sm table-fixed">
+              <thead>
+                <tr className="border-b border-border bg-secondary/30">
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "140px"}}>Dimension</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "160px"}}>Analysis Points</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium">Content</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((section) =>
+                  section.items.map((item, itemIndex) => (
+                    <tr key={`${section.category}-${itemIndex}`} className="border-b border-border hover:bg-secondary/20">
+                      {itemIndex === 0 && (
+                        <td
+                          rowSpan={section.items.length}
+                          className="font-medium text-foreground p-3 align-top bg-secondary/20 border-r border-border"
+                        >
+                          {section.category}
+                        </td>
+                      )}
+                      <td className="text-muted-foreground p-3 align-top">{item.label}</td>
+                      <td className="text-foreground p-3 align-top break-words whitespace-normal">{item.value}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
 
