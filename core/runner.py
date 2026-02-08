@@ -706,7 +706,7 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     # 构建公网图片 URL（如果有 BASE_URL）
     image_url = None
     if img_rel_path and base_url:
-        image_url = f"{base_url}/api/job/{job_id}/assets/{img_rel_path}"
+        image_url = f"{base_url}/assets/{job_id}/{img_rel_path}"
         print(f"🌐 [Seedance] Image URL: {image_url}")
 
     # 获取 prompt
