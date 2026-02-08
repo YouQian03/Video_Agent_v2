@@ -1040,8 +1040,10 @@ export default function RemixPage() {
         }
 
         // Check if there are still running tasks
-        if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots) {
-          // No running tasks but not all videos done - some might have failed
+        // 注意：串行模式下在冷却期间 runningCount 可能为 0，需要检查全局 video_gen 状态
+        const isGlobalRunning = status.globalStages?.video_gen === "RUNNING"
+        if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots && !isGlobalRunning) {
+          // No running tasks and global stage not running - generation has stopped
           console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
           break
         }
