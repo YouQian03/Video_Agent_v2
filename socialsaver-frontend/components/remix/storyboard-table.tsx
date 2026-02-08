@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card" // Card used for empty state
 import { Button } from "@/components/ui/button"
 import { FolderOpen } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
@@ -59,39 +59,70 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
 
   return (
     <>
-      <Card className="bg-card border-border w-full max-w-full">
-        <CardHeader>
-          <CardTitle className="text-foreground">{title}</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-hidden">
-            <table className="w-full border-collapse text-sm table-fixed">
+      <div className="w-full">
+        {/* Card Header - 仅显示标题 */}
+        <div className="bg-card border border-border border-b-0 rounded-t-xl px-6 py-4 flex items-center justify-between">
+          <h3 className="text-foreground font-semibold leading-none">{title}</h3>
+          <span className="text-xs text-muted-foreground">← Scroll horizontally →</span>
+        </div>
+        {/* 横向滚动容器 - 独立于 Card Header，确保可滚动 */}
+        <div
+          className="border border-border rounded-b-xl bg-card pb-4 storyboard-scroll"
+          style={{
+            overflowX: 'scroll',
+            overflowY: 'visible',
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          <table className="border-collapse text-sm w-max">
+            <colgroup>
+              <col style={{width: "40px"}} />
+              <col style={{width: "160px"}} />
+              <col style={{width: "280px"}} />
+              <col style={{width: "280px"}} />
+              <col style={{width: "130px"}} />
+              <col style={{width: "100px"}} />
+              <col style={{width: "100px"}} />
+              <col style={{width: "100px"}} />
+              <col style={{width: "150px"}} />
+              <col style={{width: "200px"}} />
+              <col style={{width: "220px"}} />
+              <col style={{width: "220px"}} />
+              {showSaveButtons && <col style={{width: "60px"}} />}
+            </colgroup>
               <thead>
                 <tr className="border-b border-border bg-secondary/30">
-                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "50px"}}>#</th>
-                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "90px"}}>Frame</th>
-                  <th className="text-muted-foreground text-left p-3 font-medium">Visual Description</th>
-                  <th className="text-muted-foreground text-left p-3 font-medium">Content Description</th>
-                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "100px"}}>Time</th>
-                  <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "120px"}}>Camera</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">#</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">Frame</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">frame_description</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">content_analysis</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">Time</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">shot_type</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">camera_angle</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">camera_movement</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">focus_and_depth</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">lighting</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">music_and_sound</th>
+                  <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">voiceover</th>
                   {showSaveButtons && (
-                    <th className="text-muted-foreground text-left p-3 font-medium" style={{width: "70px"}}>Save</th>
+                    <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">Save</th>
                   )}
                 </tr>
               </thead>
               <tbody>
                 {data.map((shot) => (
                   <tr key={shot.shotNumber} className="border-b border-border hover:bg-secondary/20">
+                    {/* shot_number */}
                     <td className="text-foreground font-medium p-3 align-top">{shot.shotNumber}</td>
-                    <td className="p-3 align-top">
-                      <div className="w-16 h-12 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
+                    {/* Frame Image - 更大的预览图 */}
+                    <td className="p-2 align-top">
+                      <div className="w-36 h-24 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
                         {shot.firstFrameImage ? (
                           <img
                             src={shot.firstFrameImage.startsWith("http") ? shot.firstFrameImage : `${API_BASE_URL}${shot.firstFrameImage}`}
                             alt={`Shot ${shot.shotNumber}`}
                             className="w-full h-full object-cover rounded"
                             onError={(e) => {
-                              // 图片加载失败时显示占位符
                               (e.target as HTMLImageElement).style.display = 'none'
                             }}
                           />
@@ -100,21 +131,61 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                         )}
                       </div>
                     </td>
-                    <td className="text-foreground p-3 align-top">
-                      <div className="break-words whitespace-normal">{safeStr(shot.visualDescription)}</div>
+                    {/* frame_description (Visual Description) */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "250px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.visualDescription)}</div>
                     </td>
-                    <td className="text-foreground p-3 align-top">
-                      <div className="break-words whitespace-normal">{safeStr(shot.contentDescription)}</div>
+                    {/* content_analysis (Content Description) */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "250px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.contentDescription)}</div>
                     </td>
-                    <td className="text-foreground p-3 align-top">
-                      <div>{formatTime(shot.startSeconds)} - {formatTime(shot.endSeconds)}</div>
-                      <div className="text-muted-foreground text-xs">({formatTime(shot.durationSeconds)})</div>
+                    {/* Time: start_time / end_time / duration_seconds */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "130px"}}>
+                      <div className="text-xs">
+                        <div>Start: {formatTime(shot.startSeconds)}</div>
+                        <div>End: {formatTime(shot.endSeconds)}</div>
+                        <div className="text-muted-foreground">Dur: {formatTime(shot.durationSeconds)}</div>
+                      </div>
                     </td>
-                    <td className="text-foreground p-3 align-top">
-                      <div className="break-words whitespace-normal">
-                        {safeStr(shot.shotSize)}
-                        {shot.cameraMovement && shot.cameraMovement !== "-" && shot.cameraMovement !== "N/A" && (
-                          <span className="text-muted-foreground"> / {safeStr(shot.cameraMovement)}</span>
+                    {/* shot_type */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "100px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.shotType) || safeStr(shot.shotSize)}</div>
+                    </td>
+                    {/* camera_angle */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "100px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.cameraAngle)}</div>
+                    </td>
+                    {/* camera_movement */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "100px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.cameraMovement)}</div>
+                    </td>
+                    {/* focus_and_depth */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "140px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.focusAndDepth) || safeStr(shot.focalLengthDepth)}</div>
+                    </td>
+                    {/* lighting */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "180px"}}>
+                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.lighting)}</div>
+                    </td>
+                    {/* music_and_sound */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "200px"}}>
+                      <div className="break-words whitespace-normal text-xs">
+                        {safeStr(shot.musicAndSound) !== "-" ? safeStr(shot.musicAndSound) : (
+                          <>
+                            {safeStr(shot.soundDesign) !== "-" && safeStr(shot.soundDesign)}
+                            {safeStr(shot.soundDesign) !== "-" && safeStr(shot.music) !== "-" && " | "}
+                            {safeStr(shot.music) !== "-" && safeStr(shot.music)}
+                            {safeStr(shot.soundDesign) === "-" && safeStr(shot.music) === "-" && "-"}
+                          </>
+                        )}
+                      </div>
+                    </td>
+                    {/* voiceover */}
+                    <td className="text-foreground p-3 align-top" style={{minWidth: "200px"}}>
+                      <div className="break-words whitespace-normal text-xs">
+                        {safeStr(shot.voiceover) !== "-" ? safeStr(shot.voiceover) : safeStr(shot.dialogueVoiceover)}
+                        {shot.dialogueText && shot.dialogueText !== "-" && (
+                          <div className="text-muted-foreground italic mt-1">"{shot.dialogueText}"</div>
                         )}
                       </div>
                     </td>
@@ -135,8 +206,7 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
               </tbody>
             </table>
           </div>
-        </CardContent>
-      </Card>
+        </div>
 
       {selectedShot && (
         <SaveToLibraryDialog

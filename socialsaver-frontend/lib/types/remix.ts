@@ -108,20 +108,33 @@ export interface ScriptAnalysis {
 }
 
 export interface StoryboardShot {
+  // 基本信息
   shotNumber: number
   firstFrameImage: string
-  visualDescription: string
-  contentDescription: string
+  // 描述字段
+  visualDescription: string       // frame_description - 首帧描述
+  contentDescription: string      // content_analysis - 内容分析
+  // 时间信息
   startSeconds: number
   endSeconds: number
   durationSeconds: number
-  shotSize: string
-  cameraAngle: string
-  cameraMovement: string
-  focalLengthDepth: string
+  // 摄影机参数
+  shotType?: string               // shot_type - 镜头类型/景别
+  shotSize: string                // 兼容旧字段
+  cameraAngle: string             // camera_angle - 摄影机角度
+  cameraMovement: string          // camera_movement - 摄影机运动
+  focusAndDepth?: string          // focus_and_depth - 焦距与景深
+  focalLengthDepth: string        // 兼容旧字段
+  // 光线
   lighting: string
+  // 音频
+  musicAndSound?: string          // music_and_sound - 音乐与音效
+  soundDesign?: string
   music: string
-  dialogueVoiceover: string
+  // 对白/旁白
+  voiceover?: string              // voiceover - 对白/旁白
+  dialogueVoiceover: string       // 兼容旧字段
+  dialogueText?: string
 }
 
 export interface RemixAnalysisResult {

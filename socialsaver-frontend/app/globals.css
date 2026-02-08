@@ -123,3 +123,23 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Storyboard table scrollbar - always visible */
+.storyboard-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) var(--secondary);
+}
+.storyboard-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.storyboard-scroll::-webkit-scrollbar-track {
+  background: var(--secondary);
+  border-radius: 4px;
+}
+.storyboard-scroll::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 4px;
+}
+.storyboard-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--ring);
+}

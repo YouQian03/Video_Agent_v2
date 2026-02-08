@@ -80,21 +80,42 @@ def convert_shot_to_socialsaver(shot: Dict[str, Any], job_id: str, base_url: str
     # 获取扩展字段（新增的 lighting, music, dialogue）
     # 这些可能在 storyboard.json 原始数据中
 
+    # 计算时间
+    start_seconds = parse_time_to_seconds(shot.get("start_time", 0))
+    end_seconds = parse_time_to_seconds(shot.get("end_time", 0))
+    duration_seconds = end_seconds - start_seconds
+
     return {
         "shotNumber": shot_number,
         "firstFrameImage": first_frame,
-        "visualDescription": visual_description,
+        # 🎬 frame_description -> visualDescription (首帧描述)
+        "visualDescription": shot.get("frame_description", "") or visual_description,
+        # 🎬 content_analysis -> contentDescription (内容分析)
         "contentDescription": shot.get("content_analysis", visual_description),
-        "startSeconds": parse_time_to_seconds(shot.get("start_time", 0)),
-        "endSeconds": parse_time_to_seconds(shot.get("end_time", 0)),
-        "durationSeconds": parse_time_to_seconds(shot.get("end_time", 0)) - parse_time_to_seconds(shot.get("start_time", 0)),
-        "shotSize": cinematography.get("shot_scale", "MEDIUM"),
-        "cameraAngle": cinematography.get("subject_orientation", "facing-camera"),
-        "cameraMovement": cinematography.get("motion_vector", "static"),
-        "focalLengthDepth": cinematography.get("camera_type", "Static"),
-        "lighting": shot.get("lighting") or cinematography.get("lighting", "Natural lighting"),
+        # 🎬 时间信息
+        "startSeconds": start_seconds,
+        "endSeconds": end_seconds,
+        "durationSeconds": duration_seconds,
+        # 🎬 shot_type -> shotType (镜头类型/景别)
+        "shotType": cinematography.get("shot_type", "") or cinematography.get("shot_scale", ""),
+        "shotSize": cinematography.get("shot_type", "") or cinematography.get("shot_scale", "MEDIUM"),
+        # 🎬 camera_angle (摄影机角度)
+        "cameraAngle": cinematography.get("camera_angle", "") or cinematography.get("subject_orientation", ""),
+        # 🎬 camera_movement (摄影机运动)
+        "cameraMovement": cinematography.get("camera_movement", "") or cinematography.get("camera_type", "") or cinematography.get("motion_vector", ""),
+        # 🎬 focus_and_depth (焦距与景深)
+        "focusAndDepth": cinematography.get("focus_and_depth", "") or cinematography.get("focal_depth", ""),
+        "focalLengthDepth": cinematography.get("focus_and_depth", "") or cinematography.get("focal_depth", ""),
+        # 🎬 lighting (光线)
+        "lighting": shot.get("lighting", "") or cinematography.get("lighting", ""),
+        # 🎬 music_and_sound (音乐与音效)
+        "musicAndSound": shot.get("music_and_sound", ""),
+        "soundDesign": shot.get("sound_design", ""),
         "music": shot.get("music_mood", ""),
-        "dialogueVoiceover": shot.get("dialogue_voiceover", "")
+        # 🎬 voiceover (对白/旁白)
+        "voiceover": shot.get("voiceover", ""),
+        "dialogueVoiceover": shot.get("dialogue_voiceover", ""),
+        "dialogueText": shot.get("dialogue_text", "")
     }
 
 
@@ -383,8 +404,17 @@ async def get_storyboard_socialsaver(job_id: str):
                 converted_shots = []
                 for ir_shot in ir_shots:
                     shot_id = ir_shot.get("shotId", "shot_01")
+                    camera = ir_shot.get("camera", {}) if isinstance(ir_shot.get("camera"), dict) else {}
+                    audio = ir_shot.get("audio", {}) if isinstance(ir_shot.get("audio"), dict) else {}
+
                     converted_shots.append({
                         "shot_id": shot_id,
+                        # 🎬 首帧描述 (Visual Description)
+                        "frame_description": ir_shot.get("firstFrameDescription", ""),
+                        # 🎬 内容分析 (Content Description)
+                        "content_analysis": ir_shot.get("subject", ""),
+                        # 🎬 场景描述
+                        "scene_description": ir_shot.get("scene", ""),
                         "description": ir_shot.get("subject", "") + " " + ir_shot.get("scene", ""),
                         "start_time": ir_shot.get("startSeconds", 0),
                         "end_time": ir_shot.get("endSeconds", 0),
@@ -399,13 +429,30 @@ async def get_storyboard_socialsaver(job_id: str):
                             "video_generate": "NOT_STARTED"
                         },
                         "cinematography": {
-                            "shot_scale": ir_shot.get("shotScale", ""),
-                            "camera_type": ir_shot.get("cameraMovement", ""),
+                            # 🎬 镜头类型/景别 (shot_type)
+                            "shot_type": camera.get("shotSize", ""),
+                            "shot_scale": camera.get("shotSize", ""),
+                            # 🎬 摄影机角度
+                            "camera_angle": camera.get("cameraAngle", ""),
+                            # 🎬 摄影机运动
+                            "camera_movement": camera.get("cameraMovement", ""),
+                            "camera_type": camera.get("cameraMovement", ""),
+                            # 🎬 焦距与景深
+                            "focus_and_depth": camera.get("focalLengthDepth", ""),
+                            "focal_depth": camera.get("focalLengthDepth", ""),
                         },
+                        # 🎬 光线
                         "lighting": ir_shot.get("lighting", ""),
-                        "music_mood": ir_shot.get("music", ""),
-                        "dialogue_voiceover": ir_shot.get("dialogueVoiceover", ""),
-                        "content_analysis": ir_shot.get("subject", ""),
+                        # 🎬 从 audio 对象中提取音频相关字段
+                        "sound_design": audio.get("soundDesign", ""),
+                        "music_mood": audio.get("music", ""),
+                        # 🎬 合并为 music_and_sound
+                        "music_and_sound": (audio.get("soundDesign", "") + " | " + audio.get("music", "")).strip(" |"),
+                        # 🎬 对白/旁白
+                        "dialogue_voiceover": audio.get("dialogue", ""),
+                        "dialogue_text": audio.get("dialogueText", ""),
+                        # 🎬 合并为 voiceover
+                        "voiceover": (audio.get("dialogue", "") + (" - " + audio.get("dialogueText", "") if audio.get("dialogueText") else "")).strip(),
                     })
                 workflow["shots"] = converted_shots
         except Exception as e:
