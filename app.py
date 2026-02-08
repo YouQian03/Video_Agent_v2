@@ -1,5 +1,14 @@
 # app.py
 import os
+
+# 🔑 加载 .env 文件中的环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("✅ Loaded environment variables from .env")
+except ImportError:
+    print("⚠️ python-dotenv not installed, using system environment variables")
+
 import json
 import uuid
 import shutil

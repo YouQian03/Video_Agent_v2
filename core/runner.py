@@ -662,7 +662,8 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     使用 Seedance 1.5 Pro API 生成视频
 
     文档: https://seedanceapi.org/docs
-    - 支持 image-to-video（需要公网可访问的图片 URL）
+    - 支持 text-to-video 和 image-to-video
+    - image_urls 必须是公网可访问的 URL（不支持 Base64）
     - 时长: 4/8/12 秒
     - 分辨率: 480p/720p
     """
@@ -670,11 +671,14 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     if not api_key:
         raise RuntimeError("SEEDANCE_API_KEY 环境变量未设置")
 
-    # 获取公网 BASE_URL（Railway 部署后自动有）
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    # 获取公网 BASE_URL（Railway 部署时必须设置）
+    base_url = os.getenv("BASE_URL", "").rstrip("/")
+    if not base_url:
+        print("⚠️ [Seedance] BASE_URL 未设置，将使用 text-to-video 模式")
 
     videos_dir = ensure_videos_dir(job_dir)
     shot_id = shot['shot_id']
+    job_id = job_dir.name
     out_path = videos_dir / f"{shot_id}.mp4"
     if out_path.exists():
         os.remove(out_path)
@@ -699,13 +703,11 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             img_rel_path = f"frames/{shot_id}.png"
             print(f"📸 [Seedance] Using original frame for {shot_id}")
 
-    if not img_rel_path:
-        raise RuntimeError(f"找不到 {shot_id} 的首帧图片")
-
-    # 构建公网可访问的图片 URL
-    job_id = job_dir.name
-    image_url = f"{base_url}/assets/{job_id}/{img_rel_path}"
-    print(f"🌐 [Seedance] Image URL: {image_url}")
+    # 构建公网图片 URL（如果有 BASE_URL）
+    image_url = None
+    if img_rel_path and base_url:
+        image_url = f"{base_url}/api/job/{job_id}/assets/{img_rel_path}"
+        print(f"🌐 [Seedance] Image URL: {image_url}")
 
     # 获取 prompt
     description, cinema = get_effective_shot_data(job_dir, wf, shot)
@@ -726,15 +728,20 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
         "Content-Type": "application/json"
     }
 
-    # 🎬 Step 1: 提交生成任务
+    # 🎬 Step 1: 构建请求参数（严格按照 seedanceapi.org 文档）
     generate_payload = {
         "prompt": prompt,
-        "image_urls": [image_url],
         "aspect_ratio": "16:9",
         "resolution": "720p",
-        "duration": "4",  # 4秒，最经济
-        "fixed_lens": True  # 锁定镜头减少抖动
+        "duration": "4"  # "4", "8", or "12"
     }
+
+    # 如果有公网图片 URL，使用 image-to-video 模式
+    if image_url:
+        generate_payload["image_urls"] = [image_url]  # 必须是数组，最多1张图
+        print(f"🎬 [Seedance] Mode: image-to-video")
+    else:
+        print(f"🎬 [Seedance] Mode: text-to-video (no BASE_URL or image)")
 
     max_retries = 3
     retry_wait = 30
@@ -742,6 +749,10 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     for attempt in range(max_retries):
         try:
             # 提交任务
+            print(f"📤 [Seedance] Sending request to {SEEDANCE_API_BASE}/generate")
+            print(f"   📋 Payload keys: {list(generate_payload.keys())}")
+            print(f"   🔑 Auth header: Bearer sk-***{api_key[-4:] if len(api_key) > 4 else '****'}")
+
             response = requests.post(
                 f"{SEEDANCE_API_BASE}/generate",
                 headers=headers,
@@ -749,11 +760,18 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
                 timeout=60
             )
 
+            print(f"📥 [Seedance] Response status: {response.status_code}")
+            print(f"   📄 Response body: {response.text[:500]}")
+
             if response.status_code == 402:
                 raise RuntimeError("Seedance 余额不足，请充值")
 
+            if response.status_code == 401:
+                raise RuntimeError(f"Seedance 认证失败，请检查 API Key: {response.text[:200]}")
+
             if response.status_code != 200:
-                error_msg = response.text[:200]
+                error_msg = response.text[:500]
+                print(f"❌ [Seedance] API Error: {error_msg}")
                 raise RuntimeError(f"Seedance API 错误 ({response.status_code}): {error_msg}")
 
             result = response.json()
