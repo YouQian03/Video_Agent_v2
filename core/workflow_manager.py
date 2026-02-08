@@ -136,7 +136,7 @@ class WorkflowManager:
             "job_id": new_id,
             "source_video": "input.mp4",
             "film_ir_path": "film_ir.json",  # 🎬 Film IR 关联
-            "global": {"style_prompt": "Cinematic Realistic", "video_model": "veo"},
+            "global": {"style_prompt": "Cinematic Realistic", "video_model": "seedance"},
             "global_stages": {
                 "analyze": "SUCCESS", "extract": "SUCCESS",
                 "stylize": "NOT_STARTED", "video_gen": "NOT_STARTED", "merge": "NOT_STARTED"
