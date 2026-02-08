@@ -657,6 +657,179 @@ high motion quality, cinematic, professional cinematography"""
     raise RuntimeError(f"Veo 生成失败：已重试 {max_retries} 次")
 
 
+def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
+    """
+    使用 Seedance 1.5 Pro API 生成视频
+
+    文档: https://seedanceapi.org/docs
+    - 支持 image-to-video（需要公网可访问的图片 URL）
+    - 时长: 4/8/12 秒
+    - 分辨率: 480p/720p
+    """
+    api_key = os.getenv("SEEDANCE_API_KEY")
+    if not api_key:
+        raise RuntimeError("SEEDANCE_API_KEY 环境变量未设置")
+
+    # 获取公网 BASE_URL（Railway 部署后自动有）
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+
+    videos_dir = ensure_videos_dir(job_dir)
+    shot_id = shot['shot_id']
+    out_path = videos_dir / f"{shot_id}.mp4"
+    if out_path.exists():
+        os.remove(out_path)
+
+    # 🎯 图片来源优先级：storyboard_frames > stylized_frames > frames
+    img_rel_path = None
+
+    storyboard_frame = job_dir / "storyboard_frames" / f"{shot_id}.png"
+    if storyboard_frame.exists():
+        img_rel_path = f"storyboard_frames/{shot_id}.png"
+        print(f"📸 [Seedance] Using storyboard_frame for {shot_id}")
+
+    if not img_rel_path:
+        stylized_frame = job_dir / "stylized_frames" / f"{shot_id}.png"
+        if stylized_frame.exists():
+            img_rel_path = f"stylized_frames/{shot_id}.png"
+            print(f"📸 [Seedance] Using stylized_frame for {shot_id}")
+
+    if not img_rel_path:
+        original_frame = job_dir / "frames" / f"{shot_id}.png"
+        if original_frame.exists():
+            img_rel_path = f"frames/{shot_id}.png"
+            print(f"📸 [Seedance] Using original frame for {shot_id}")
+
+    if not img_rel_path:
+        raise RuntimeError(f"找不到 {shot_id} 的首帧图片")
+
+    # 构建公网可访问的图片 URL
+    job_id = job_dir.name
+    image_url = f"{base_url}/assets/{job_id}/{img_rel_path}"
+    print(f"🌐 [Seedance] Image URL: {image_url}")
+
+    # 获取 prompt
+    description, cinema = get_effective_shot_data(job_dir, wf, shot)
+    style = wf.get('global', {}).get('style_prompt', '')
+
+    # 构建 Seedance prompt
+    prompt = f"{description}. Style: {style}. Cinematic, high quality, smooth motion."
+    if len(prompt) > 2000:
+        prompt = prompt[:2000]
+
+    print(f"🚀 [Seedance 1.5 Pro] 正在生成视频: {shot_id}")
+    print(f"   📝 Prompt: {prompt[:100]}...")
+
+    # API 配置
+    SEEDANCE_API_BASE = "https://seedanceapi.org/v1"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    # 🎬 Step 1: 提交生成任务
+    generate_payload = {
+        "prompt": prompt,
+        "image_urls": [image_url],
+        "aspect_ratio": "16:9",
+        "resolution": "720p",
+        "duration": "4",  # 4秒，最经济
+        "fixed_lens": True  # 锁定镜头减少抖动
+    }
+
+    max_retries = 3
+    retry_wait = 30
+
+    for attempt in range(max_retries):
+        try:
+            # 提交任务
+            response = requests.post(
+                f"{SEEDANCE_API_BASE}/generate",
+                headers=headers,
+                json=generate_payload,
+                timeout=60
+            )
+
+            if response.status_code == 402:
+                raise RuntimeError("Seedance 余额不足，请充值")
+
+            if response.status_code != 200:
+                error_msg = response.text[:200]
+                raise RuntimeError(f"Seedance API 错误 ({response.status_code}): {error_msg}")
+
+            result = response.json()
+            if result.get("code") != 200:
+                raise RuntimeError(f"Seedance 返回错误: {result.get('message')}")
+
+            task_id = result["data"]["task_id"]
+            print(f"⏳ [Seedance] 任务已提交 (Task ID: {task_id})")
+
+            # 🎬 Step 2: 轮询状态
+            max_polls = 120  # 最多等待 10 分钟 (120 * 5s)
+            for poll in range(max_polls):
+                time.sleep(5)
+
+                status_response = requests.get(
+                    f"{SEEDANCE_API_BASE}/status",
+                    headers=headers,
+                    params={"task_id": task_id},
+                    timeout=30
+                )
+
+                if status_response.status_code != 200:
+                    print(f"   ⚠️ 状态查询失败: {status_response.status_code}")
+                    continue
+
+                status_data = status_response.json()
+                task_status = status_data.get("data", {}).get("status", "")
+
+                if task_status == "SUCCESS":
+                    video_urls = status_data["data"].get("response", [])
+                    if not video_urls:
+                        raise RuntimeError("Seedance 返回成功但无视频 URL")
+
+                    video_url = video_urls[0]
+                    print(f"✅ [Seedance] 生成成功，正在下载...")
+
+                    # 下载视频
+                    video_response = requests.get(video_url, stream=True, timeout=120)
+                    if video_response.status_code == 200:
+                        with open(out_path, 'wb') as f:
+                            for chunk in video_response.iter_content(chunk_size=1024*1024):
+                                f.write(chunk)
+                        print(f"💾 [Seedance] 视频已保存: {out_path}")
+                        return f"videos/{out_path.name}"
+                    else:
+                        raise RuntimeError(f"视频下载失败: {video_response.status_code}")
+
+                elif task_status == "FAILED":
+                    error_msg = status_data["data"].get("error_message", "未知错误")
+                    raise RuntimeError(f"Seedance 生成失败: {error_msg}")
+
+                else:
+                    # IN_PROGRESS 或其他状态，继续轮询
+                    if poll % 6 == 0:  # 每 30 秒打印一次
+                        print(f"   ⏳ 生成中... (轮询 {poll + 1})")
+
+            raise RuntimeError("Seedance 生成超时 (10分钟)")
+
+        except Exception as e:
+            error_str = str(e).lower()
+            is_rate_limit = "429" in error_str or "rate" in error_str or "too many" in error_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                import random
+                jitter = random.uniform(5, 15)
+                wait_time = retry_wait * (attempt + 1) + jitter
+                print(f"⚠️ [Seedance] 触发限流，等待 {wait_time:.1f}s 后重试 ({attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"❌ [Seedance] 失败: {str(e)}")
+                raise e
+
+    raise RuntimeError(f"Seedance 生成失败：已重试 {max_retries} 次")
+
+
 def run_stylize(job_dir: Path, wf: dict, target_shot: str | None = None) -> None:
     shots_to_process = []
     for shot in wf.get("shots", []):
@@ -707,9 +880,11 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         shot.setdefault("status", {})["video_generate"] = "RUNNING"
         save_workflow(job_dir, wf)
         try:
-            video_model = wf.get("global", {}).get("video_model", "mock")
+            video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
             if video_model == "veo":
                 rel_video_path = veo_generate_video(job_dir, wf, shot)
+            elif video_model == "seedance":
+                rel_video_path = seedance_generate_video(job_dir, wf, shot)
             else:
                 rel_video_path = mock_generate_video(job_dir, shot)
             shot.setdefault("assets", {})["video"] = rel_video_path

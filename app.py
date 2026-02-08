@@ -507,7 +507,7 @@ def _run_batch_video_generation_serial(job_id: str):
     """
     import time
     import random
-    from core.runner import veo_generate_video, save_workflow, load_workflow
+    from core.runner import veo_generate_video, seedance_generate_video, save_workflow, load_workflow
 
     job_dir = Path("jobs") / job_id
     wf = load_workflow(job_dir)
@@ -554,10 +554,12 @@ def _run_batch_video_generation_serial(job_id: str):
         save_workflow(job_dir, wf)
 
         try:
-            video_model = wf.get("global", {}).get("video_model", "veo")
+            video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
 
             if video_model == "veo":
                 rel_video_path = veo_generate_video(job_dir, wf, shot)
+            elif video_model == "seedance":
+                rel_video_path = seedance_generate_video(job_dir, wf, shot)
             else:
                 # Mock 模式快速测试
                 from core.runner import mock_generate_video
