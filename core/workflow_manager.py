@@ -500,9 +500,9 @@ class WorkflowManager:
         """
         ffmpeg_path = get_ffmpeg_path()
         for s in storyboard:
-            ts = to_seconds(s.get("start_time"))
-            end_ts = to_seconds(s.get("end_time"))
-            duration = end_ts - ts
+            ts = to_seconds(s.get("start_time")) or 0
+            end_ts = to_seconds(s.get("end_time")) or (ts + 3)  # 默认 3 秒
+            duration = end_ts - ts if end_ts > ts else 3  # 防止负数或零
             sid = f"shot_{int(s['shot_number']):02d}"
 
             # 🎯 关键帧提取：AI 语义锚点 + 数学保底
