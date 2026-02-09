@@ -124,7 +124,7 @@ export async function uploadVideoAndWaitForAnalysis(
   console.log("📋 Job created:", jobId, "- Polling for analysis completion...");
 
   // 2. Poll for analysis completion
-  const maxAttempts = 300; // 25 minutes max (5s interval)
+  const maxAttempts = 420; // 35 minutes max (5s interval)
   const pollInterval = 5000; // 5 seconds
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -155,7 +155,7 @@ export async function uploadVideoAndWaitForAnalysis(
     }
   }
 
-  throw new Error("Analysis timed out after 25 minutes");
+  throw new Error("Analysis timed out after 35 minutes");
 }
 
 /**

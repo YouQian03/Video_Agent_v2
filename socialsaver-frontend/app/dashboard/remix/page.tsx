@@ -1072,12 +1072,14 @@ export default function RemixPage() {
             break
           }
 
-          // Check if there are still running tasks
-          // Note: In serial mode runningCount may be 0 during cooldown, need to check global video_gen status
-          const isGlobalRunning = status.globalStages?.video_gen === "RUNNING"
-          if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots && !isGlobalRunning) {
-            // No running tasks and global stage not running - generation has stopped
-            console.warn(`Video generation completed with ${status.videoGeneratedCount}/${status.totalShots} videos (some may have failed due to API limits)`)
+          // Check if video generation has reached a terminal state
+          // Only break when globalStages.video_gen is explicitly SUCCESS, PARTIAL, FAILED, or PAUSED
+          const videoGenStatus = status.globalStages?.video_gen
+          const isTerminalState = ["SUCCESS", "PARTIAL", "FAILED", "PAUSED"].includes(videoGenStatus)
+
+          if (isTerminalState) {
+            // Video generation has explicitly finished
+            console.log(`Video generation ended with status: ${videoGenStatus}, ${status.videoGeneratedCount}/${status.totalShots} completed`)
             break
           }
         } catch (pollError) {
