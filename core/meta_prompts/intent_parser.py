@@ -261,6 +261,17 @@ def parse_intent_result(ai_output: dict) -> dict:
     Returns:
         规范化的 ParsedIntent 字典
     """
+    # 处理 Gemini 返回列表而非字典的情况
+    if isinstance(ai_output, list):
+        if len(ai_output) > 0 and isinstance(ai_output[0], dict):
+            print(f"⚠️ Intent parsing received list, extracting first element")
+            ai_output = ai_output[0]
+        else:
+            raise ValueError(f"Intent parsing returned invalid list format: {type(ai_output)}")
+
+    if not isinstance(ai_output, dict):
+        raise ValueError(f"Intent parsing expected dict, got: {type(ai_output)}")
+
     # 规范化 subjectMapping 中的每个条目
     if "subjectMapping" in ai_output:
         for mapping in ai_output["subjectMapping"]:
