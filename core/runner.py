@@ -666,10 +666,18 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     - image_urls 必须是公网可访问的 URL（不支持 Base64）
     - 时长: 4/8/12 秒
     - 分辨率: 480p/720p
+    - generate_audio: 启用 AI 音频生成（voiceover/音效/背景音乐）
     """
     api_key = os.getenv("SEEDANCE_API_KEY")
     if not api_key:
         raise RuntimeError("SEEDANCE_API_KEY 环境变量未设置")
+
+    # 🔧 清理 API Key：移除不可见 Unicode 字符和空白
+    # 这些字符可能在复制粘贴时被意外引入，导致 'latin-1' 编码错误
+    api_key = api_key.strip()
+    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+    if not api_key:
+        raise RuntimeError("SEEDANCE_API_KEY 清理后为空，请检查是否包含有效字符")
 
     # 获取公网 BASE_URL（Railway 部署时必须设置）
     base_url = os.getenv("BASE_URL", "").rstrip("/")
@@ -682,6 +690,22 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     out_path = videos_dir / f"{shot_id}.mp4"
     if out_path.exists():
         os.remove(out_path)
+
+    # 🔊 读取 Sound Design 配置（从 film_ir.json）
+    sound_design = {}
+    enable_audio = True  # 默认启用音频生成
+    try:
+        film_ir_path = job_dir / "film_ir.json"
+        if film_ir_path.exists():
+            import json
+            with open(film_ir_path, 'r', encoding='utf-8') as f:
+                film_ir = json.load(f)
+            render_strategy = film_ir.get("pillars", {}).get("IV_renderStrategy", {})
+            sound_design = render_strategy.get("soundDesignConfig", {})
+            enable_audio = sound_design.get("enableAudioGeneration", True)
+            print(f"🔊 [Seedance] Sound Design loaded: voice={sound_design.get('voiceStyle', 'N/A')}, tone={sound_design.get('voiceTone', 'N/A')}")
+    except Exception as e:
+        print(f"⚠️ [Seedance] Failed to load Sound Design config: {e}")
 
     # 🎯 图片来源优先级：storyboard_frames > stylized_frames > frames
     img_rel_path = None
@@ -713,13 +737,31 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     description, cinema = get_effective_shot_data(job_dir, wf, shot)
     style = wf.get('global', {}).get('style_prompt', '')
 
+    # 🎤 获取该镜头的对白文本
+    dialogue_text = shot.get('dialogue_text', '') or shot.get('dialogueText', '') or shot.get('dialogue', '')
+
+    # 🎤 构建包含语音的 prompt
+    voice_style = sound_design.get('voiceStyle', 'natural')
+    voice_tone = sound_design.get('voiceTone', 'warm and friendly')
+
     # 构建 Seedance prompt
-    prompt = f"{description}. Style: {style}. Cinematic, high quality, smooth motion."
+    prompt_parts = [description]
+
+    # 如果有对白，添加语音描述
+    if dialogue_text and dialogue_text.strip():
+        voice_desc = f'[The character naturally delivers the line: "{dialogue_text}" in a {voice_tone}, {voice_style} voice.]'
+        prompt_parts.append(voice_desc)
+        print(f"🎤 [Seedance] Adding voiceover: {dialogue_text[:50]}...")
+
+    prompt_parts.append(f"Style: {style}. Cinematic, high quality, smooth motion.")
+    prompt = " ".join(prompt_parts)
+
     if len(prompt) > 2000:
         prompt = prompt[:2000]
 
     print(f"🚀 [Seedance 1.5 Pro] 正在生成视频: {shot_id}")
-    print(f"   📝 Prompt: {prompt[:100]}...")
+    print(f"   📝 Prompt: {prompt[:150]}...")
+    print(f"   🔊 Audio generation: {'enabled' if enable_audio else 'disabled'}")
 
     # API 配置
     SEEDANCE_API_BASE = "https://seedanceapi.org/v1"
@@ -733,7 +775,8 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
         "prompt": prompt,
         "aspect_ratio": "16:9",
         "resolution": "720p",
-        "duration": "4"  # "4", "8", or "12"
+        "duration": "4",  # "4", "8", or "12"
+        "generate_audio": enable_audio  # 启用 AI 音频生成
     }
 
     # 如果有公网图片 URL，使用 image-to-video 模式
@@ -752,6 +795,17 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
             print(f"📤 [Seedance] Sending request to {SEEDANCE_API_BASE}/generate")
             print(f"   📋 Payload keys: {list(generate_payload.keys())}")
             print(f"   🔑 Auth header: Bearer sk-***{api_key[-4:] if len(api_key) > 4 else '****'}")
+            print(f"   🔑 API key length: {len(api_key)}, all ASCII: {api_key.isascii()}")
+
+            # 🔧 验证 headers 可以被 latin-1 编码（HTTP/1.1 要求）
+            try:
+                for key, value in headers.items():
+                    value.encode('latin-1')
+            except UnicodeEncodeError as e:
+                print(f"❌ [Encoding] Header encoding error in '{key}': {e}")
+                # 尝试清理 header 值
+                headers[key] = value.encode('ascii', 'ignore').decode('ascii')
+                print(f"   🔧 Cleaned header: {key}={headers[key][:50]}...")
 
             response = requests.post(
                 f"{SEEDANCE_API_BASE}/generate",

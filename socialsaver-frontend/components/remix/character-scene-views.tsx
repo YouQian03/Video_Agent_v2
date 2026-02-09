@@ -71,6 +71,10 @@ import {
   pollGenerateViewsStatus,
   getEntityState,
   type EntityState,
+  // Sound Design APIs
+  getSoundDesign,
+  saveSoundDesign,
+  type SoundDesignConfig,
   // Visual Style APIs
   getVisualStyle,
   saveVisualStyle,
@@ -197,21 +201,21 @@ function SoundDesignSection({
           </Button>
         </div>
         <Card className="bg-card border-accent">
-          <CardContent className="p-4">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-3">
-              <div className="space-y-1">
+          <CardContent className="p-6">
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Voice Style</p>
                 <p className="text-sm text-foreground">{soundDesign.voiceStyle || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Voice Tone</p>
                 <p className="text-sm text-foreground">{soundDesign.voiceTone || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Background Music</p>
                 <p className="text-sm text-foreground">{soundDesign.backgroundMusic || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Sound Effects</p>
                 <p className="text-sm text-foreground">{soundDesign.soundEffects || "-"}</p>
               </div>
@@ -475,21 +479,21 @@ function VisualStyleSection({
           </Button>
         </div>
         <Card className="bg-card border-accent">
-          <CardContent className="p-4">
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 mb-3">
-              <div className="space-y-1">
+          <CardContent className="p-6">
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Art Style</p>
                 <p className="text-sm text-foreground">{visualStyle.artStyle || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Color Palette</p>
                 <p className="text-sm text-foreground">{visualStyle.colorPalette || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Lighting Mood</p>
                 <p className="text-sm text-foreground">{visualStyle.lightingMood || "-"}</p>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Camera Style</p>
                 <p className="text-sm text-foreground">{visualStyle.cameraStyle || "-"}</p>
               </div>
@@ -1661,10 +1665,23 @@ export function CharacterSceneViews({
   }
 
   // Sound Design confirm/cancel/edit handlers
-  const handleSoundDesignConfirm = () => {
-    setSoundDesignConfirmed(true)
-    setSoundDesignEditing(false)
-    console.log("Sound design confirmed:", soundDesign)
+  const handleSoundDesignConfirm = async () => {
+    // Save to backend
+    try {
+      await saveSoundDesign(jobId, {
+        voiceStyle: soundDesign.voiceStyle,
+        voiceTone: soundDesign.voiceTone,
+        backgroundMusic: soundDesign.backgroundMusic,
+        soundEffects: soundDesign.soundEffects,
+        enableAudioGeneration: true,  // Enable audio generation by default
+        confirmed: true,
+      })
+      setSoundDesignConfirmed(true)
+      setSoundDesignEditing(false)
+      console.log("Sound design saved:", soundDesign)
+    } catch (error) {
+      console.error("Failed to save sound design:", error)
+    }
   }
 
   const handleSoundDesignCancel = () => {
@@ -1700,6 +1717,32 @@ export function CharacterSceneViews({
     setVisualStyleEditing(true)
     setVisualStyleConfirmed(false)
   }
+
+  // Load Sound Design from backend
+  useEffect(() => {
+    const loadSoundDesign = async () => {
+      try {
+        const response = await getSoundDesign(jobId)
+        if (response.soundDesign) {
+          setSoundDesign({
+            voiceStyle: response.soundDesign.voiceStyle || "Natural",
+            voiceTone: response.soundDesign.voiceTone || "Warm and friendly",
+            backgroundMusic: response.soundDesign.backgroundMusic || "Upbeat, modern electronic",
+            soundEffects: response.soundDesign.soundEffects || "Subtle, ambient",
+          })
+          setSoundDesignConfirmed(response.soundDesign.confirmed || false)
+          if (response.soundDesign.confirmed) {
+            setSoundDesignEditing(false)
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load sound design:", error)
+      }
+    }
+    if (jobId) {
+      loadSoundDesign()
+    }
+  }, [jobId])
 
   // Load Visual Style from backend
   useEffect(() => {
@@ -1755,6 +1798,15 @@ export function CharacterSceneViews({
   // 1. If characterAnchors exist (from remix), use them directly (they contain the remix-modified data)
   // 2. Otherwise, fall back to characterLedger (original video analysis data)
   useEffect(() => {
+    // 🔍 DEBUG: Log all relevant state for troubleshooting
+    console.log("🔍 [Character Init] State check:", {
+      "characters.length": characters.length,
+      "characterAnchors.length": characterAnchors.length,
+      "characterLedger.length": characterLedger.length,
+      "characterAnchors": characterAnchors.map(a => ({ id: a.anchorId, name: a.anchorName })),
+      "characterLedger": characterLedger.map(e => ({ id: e.entityId, name: e.displayName, type: e.entityType }))
+    })
+
     if (characters.length === 0) {
       let initialChars: CharacterView[] = []
 
@@ -1774,7 +1826,13 @@ export function CharacterSceneViews({
       // Priority 2: Fall back to characterLedger if no anchors
       else if (characterLedger.length > 0) {
         console.log("📋 Initializing characters from ledger (no anchors):", characterLedger.length)
-        initialChars = characterLedger.map((entity) => ({
+        // 🔍 Verify entityType to ensure we only get CHARACTER entities
+        const validCharacters = characterLedger.filter(entity =>
+          entity.entityType === "CHARACTER" || entity.entityId?.startsWith("orig_char_")
+        )
+        console.log("📋 Filtered valid characters:", validCharacters.length)
+
+        initialChars = validCharacters.map((entity) => ({
           id: entity.entityId,
           name: entity.displayName,
           description: entity.detailedDescription || entity.visualSignature || "",
@@ -1786,8 +1844,13 @@ export function CharacterSceneViews({
       }
 
       if (initialChars.length > 0) {
+        console.log("📋 Setting characters:", initialChars.map(c => ({ id: c.id, name: c.name })))
         onCharactersChange(initialChars)
+      } else {
+        console.log("📋 No characters to initialize")
       }
+    } else {
+      console.log("📋 Characters already initialized, skipping:", characters.length)
     }
   }, [characterLedger, characterAnchors, characters.length, onCharactersChange])
 

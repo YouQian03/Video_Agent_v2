@@ -32,7 +32,7 @@ export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfir
     {
       id: "1",
       role: "assistant",
-      content: "I'll help you refine the storyboard. Tell me which shot(s) you'd like to modify and what changes you want. For example:\n\n- '把镜头3的时长加倍'\n- 'Make shot 2 use warmer lighting'\n- '给主角加个墨镜'",
+      content: "I'll help you refine the storyboard. Tell me which shot(s) you'd like to modify and what changes you want. For example:\n\n- 'Double the duration of shot 3'\n- 'Make shot 2 use warmer lighting'\n- 'Add sunglasses to the main character'",
       timestamp: new Date(),
     },
   ])

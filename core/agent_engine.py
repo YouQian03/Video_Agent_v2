@@ -12,7 +12,7 @@ class AgentEngine:
         if not api_key:
             raise RuntimeError("未检测到 GEMINI_API_KEY")
         self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-2.0-flash" 
+        self.model_id = "gemini-3-flash-preview" 
 
     def get_action_from_text(self, user_input: str, workflow_summary: str) -> Union[Dict, List]:
         system_prompt = f"""

@@ -709,6 +709,12 @@ export default function RemixPage() {
         console.log("📋 Raw Character Ledger Response:", ledgerData)
         console.log("📋 characterLedger:", ledgerData.characterLedger?.length || 0, "items")
         console.log("📋 environmentLedger:", ledgerData.environmentLedger?.length || 0, "items")
+        // 🔍 DEBUG: Log character names and types to verify correct classification
+        console.log("📋 characterLedger details:", (ledgerData.characterLedger || []).map((c: any) => ({
+          id: c.entityId,
+          name: c.displayName,
+          type: c.entityType
+        })))
         setCharacterLedger(ledgerData.characterLedger || [])
         setEnvironmentLedger(ledgerData.environmentLedger || [])
         console.log("✅ Character Ledger received:", ledgerData.summary)
@@ -773,11 +779,16 @@ export default function RemixPage() {
 
       // Store identity anchors for character/scene views step
       if (remixPrompts.identityAnchors) {
-        setCharacterAnchors(remixPrompts.identityAnchors.characters || [])
-        setEnvironmentAnchors(remixPrompts.identityAnchors.environments || [])
+        const charAnchors = remixPrompts.identityAnchors.characters || []
+        const envAnchors = remixPrompts.identityAnchors.environments || []
+        setCharacterAnchors(charAnchors)
+        setEnvironmentAnchors(envAnchors)
         console.log("📋 Identity anchors stored:", {
-          characters: remixPrompts.identityAnchors.characters?.length || 0,
-          environments: remixPrompts.identityAnchors.environments?.length || 0
+          characters: charAnchors.length,
+          environments: envAnchors.length,
+          // 🔍 DEBUG: Log actual anchor names to verify correct categorization
+          characterNames: charAnchors.map((a: any) => a.anchorName || a.name),
+          environmentNames: envAnchors.map((a: any) => a.anchorName || a.name)
         })
       }
 
@@ -952,7 +963,7 @@ export default function RemixPage() {
         : (realStoryboard?.storyboard || analysisResult?.storyboard || [])
       const totalShots = shots.length
 
-      // 🔒 Stage 0: Finalize storyboard data - 确保 Film IR 包含最新数据
+      // 🔒 Stage 0: Finalize storyboard data - ensure Film IR contains the latest data
       setGenerationProgress({
         stage: "stylizing",
         currentShot: 0,
@@ -960,7 +971,7 @@ export default function RemixPage() {
         message: "Syncing storyboard data..."
       })
 
-      // 将 StoryboardShot 转换为 RemixStoryboardShot 格式
+      // Convert StoryboardShot to RemixStoryboardShot format
       const remixShots: RemixStoryboardShot[] = shots.map((shot, idx) => ({
         shotNumber: shot.shotNumber || idx + 1,
         shotId: `shot_${String(shot.shotNumber || idx + 1).padStart(2, "0")}`,
@@ -990,11 +1001,11 @@ export default function RemixPage() {
       }
 
       // 🎨 Stage 1: Skip stylize for Remix flow (we use storyboard_frames instead)
-      // storyboard_frames 已经在 Generate Storyboard 步骤中生成
-      // 这些图包含了 Identity Anchor 的特征，是视频生成的第0帧
+      // storyboard_frames were already generated in the Generate Storyboard step
+      // These images contain Identity Anchor features and serve as the first frame for video generation
       console.log("📸 [Video Gen] Using storyboard_frames as first frame (skip stylize)")
 
-      // 🎬 Stage 2: Generate videos for all shots (串行执行，避免 RPM 限流)
+      // 🎬 Stage 2: Generate videos for all shots (serial execution to avoid RPM throttling)
       setGenerationProgress({
         stage: "generating",
         currentShot: 0,
@@ -1002,21 +1013,21 @@ export default function RemixPage() {
         message: "Starting serial video generation (30s cooling between shots)..."
       })
 
-      // 🚀 使用批量串行 API，避免并发轰炸 Veo
+      // 🚀 Use batch serial API to avoid concurrent bombardment of Veo
       console.log("🎬 [Video Gen] Triggering batch serial video generation...")
       await generateVideosBatch(currentJobId)
 
       // Poll for video generation completion
-      // 串行模式下每个 shot 需要 ~3-5 分钟 + 30s 冷却，所以需要更长的轮询时间
+      // In serial mode each shot takes ~3-5 minutes + 30s cooldown, so longer polling time is needed
       let pollAttempts = 0
-      const maxPollAttempts = 300 // 25 minutes max (300 * 5s) - 串行模式需要更长时间
+      const maxPollAttempts = 300 // 25 minutes max (300 * 5s) - serial mode needs longer time
       let finalVideoCount = 0
 
       while (pollAttempts < maxPollAttempts) {
         const status = await getJobStatus(currentJobId)
         finalVideoCount = status.videoGeneratedCount
 
-        // 检查是否被熔断暂停
+        // Check if paused due to circuit breaker
         const isPaused = status.globalStages?.video_gen === "PAUSED"
 
         setGenerationProgress({
@@ -1028,19 +1039,19 @@ export default function RemixPage() {
             : `Generating videos (serial): ${status.videoGeneratedCount} of ${status.totalShots} complete...`
         })
 
-        // 检查是否完成或被暂停
+        // Check if completed or paused
         if (status.videoGeneratedCount >= status.totalShots) {
           break
         }
 
-        // 检查是否被熔断暂停
+        // Check if paused due to circuit breaker
         if (isPaused) {
           console.warn(`🛑 Video generation paused due to API limits. ${status.videoGeneratedCount}/${status.totalShots} completed.`)
           break
         }
 
         // Check if there are still running tasks
-        // 注意：串行模式下在冷却期间 runningCount 可能为 0，需要检查全局 video_gen 状态
+        // Note: In serial mode runningCount may be 0 during cooldown, need to check global video_gen status
         const isGlobalRunning = status.globalStages?.video_gen === "RUNNING"
         if (status.runningCount === 0 && status.videoGeneratedCount < status.totalShots && !isGlobalRunning) {
           // No running tasks and global stage not running - generation has stopped

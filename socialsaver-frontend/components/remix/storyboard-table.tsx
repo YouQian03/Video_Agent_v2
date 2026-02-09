@@ -60,12 +60,12 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
   return (
     <>
       <div className="w-full">
-        {/* Card Header - 仅显示标题 */}
+        {/* Card Header - Title only */}
         <div className="bg-card border border-border border-b-0 rounded-t-xl px-6 py-4 flex items-center justify-between">
           <h3 className="text-foreground font-semibold leading-none">{title}</h3>
           <span className="text-xs text-muted-foreground">← Scroll horizontally →</span>
         </div>
-        {/* 横向滚动容器 - 独立于 Card Header，确保可滚动 */}
+        {/* Horizontal scroll container - Independent from Card Header to ensure scrollability */}
         <div
           className="border border-border rounded-b-xl bg-card pb-4 storyboard-scroll"
           style={{
@@ -114,7 +114,7 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                   <tr key={shot.shotNumber} className="border-b border-border hover:bg-secondary/20">
                     {/* shot_number */}
                     <td className="text-foreground font-medium p-3 align-top">{shot.shotNumber}</td>
-                    {/* Frame Image - 更大的预览图 */}
+                    {/* Frame Image - Larger preview */}
                     <td className="p-2 align-top">
                       <div className="w-36 h-24 bg-secondary rounded flex items-center justify-center text-xs text-muted-foreground overflow-hidden">
                         {shot.firstFrameImage ? (

@@ -108,32 +108,32 @@ export interface ScriptAnalysis {
 }
 
 export interface StoryboardShot {
-  // 基本信息
+  // Basic info
   shotNumber: number
   firstFrameImage: string
-  // 描述字段
-  visualDescription: string       // frame_description - 首帧描述
-  contentDescription: string      // content_analysis - 内容分析
-  // 时间信息
+  // Description fields
+  visualDescription: string       // frame_description - First frame description
+  contentDescription: string      // content_analysis - Content analysis
+  // Time info
   startSeconds: number
   endSeconds: number
   durationSeconds: number
-  // 摄影机参数
-  shotType?: string               // shot_type - 镜头类型/景别
-  shotSize: string                // 兼容旧字段
-  cameraAngle: string             // camera_angle - 摄影机角度
-  cameraMovement: string          // camera_movement - 摄影机运动
-  focusAndDepth?: string          // focus_and_depth - 焦距与景深
-  focalLengthDepth: string        // 兼容旧字段
-  // 光线
+  // Camera parameters
+  shotType?: string               // shot_type - Shot type/size
+  shotSize: string                // Legacy field
+  cameraAngle: string             // camera_angle - Camera angle
+  cameraMovement: string          // camera_movement - Camera movement
+  focusAndDepth?: string          // focus_and_depth - Focal length and depth
+  focalLengthDepth: string        // Legacy field
+  // Lighting
   lighting: string
-  // 音频
-  musicAndSound?: string          // music_and_sound - 音乐与音效
+  // Audio
+  musicAndSound?: string          // music_and_sound - Music and sound effects
   soundDesign?: string
   music: string
-  // 对白/旁白
-  voiceover?: string              // voiceover - 对白/旁白
-  dialogueVoiceover: string       // 兼容旧字段
+  // Dialogue/Voiceover
+  voiceover?: string              // voiceover - Dialogue/Voiceover
+  dialogueVoiceover: string       // Legacy field
   dialogueText?: string
 }
 

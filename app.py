@@ -1649,7 +1649,7 @@ Return ONLY the JSON object, no other text."""
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[parse_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1715,7 +1715,7 @@ Generate an updated cinematic prompt that incorporates the requested changes whi
 Return ONLY the new prompt text, no other explanation."""
 
                     regen_response = client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-3-flash-preview",
                         contents=[regen_prompt]
                     )
                     new_prompt = regen_response.text.strip()
@@ -2907,6 +2907,74 @@ async def unbind_asset(job_id: str, entity_id: str):
 
 
 # ============================================================
+# Sound Design API
+# ============================================================
+
+class SoundDesignRequest(BaseModel):
+    voiceStyle: str = "Natural"
+    voiceTone: str = "Warm and friendly"
+    backgroundMusic: str = "Upbeat, modern electronic"
+    soundEffects: str = "Subtle, ambient"
+    enableAudioGeneration: bool = True  # 是否启用 Seed Dance 音频生成
+    confirmed: bool = False
+
+
+@app.get("/api/job/{job_id}/sound-design")
+async def get_sound_design(job_id: str):
+    """
+    获取 Sound Design 配置
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Get sound design config from Pillar IV
+    render_strategy = ir_manager.ir["pillars"]["IV_renderStrategy"]
+    sound_design = render_strategy.get("soundDesignConfig", {
+        "voiceStyle": "Natural",
+        "voiceTone": "Warm and friendly",
+        "backgroundMusic": "Upbeat, modern electronic",
+        "soundEffects": "Subtle, ambient",
+        "enableAudioGeneration": True,
+        "confirmed": False
+    })
+
+    return sound_design
+
+
+@app.put("/api/job/{job_id}/sound-design")
+async def save_sound_design(job_id: str, request: SoundDesignRequest):
+    """
+    保存 Sound Design 配置
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Update config
+    sound_design_config = {
+        "voiceStyle": request.voiceStyle,
+        "voiceTone": request.voiceTone,
+        "backgroundMusic": request.backgroundMusic,
+        "soundEffects": request.soundEffects,
+        "enableAudioGeneration": request.enableAudioGeneration,
+        "confirmed": request.confirmed
+    }
+
+    ir_manager.ir["pillars"]["IV_renderStrategy"]["soundDesignConfig"] = sound_design_config
+    ir_manager.save()
+
+    return {
+        "status": "success",
+        "soundDesignConfig": sound_design_config
+    }
+
+
+# ============================================================
 # Visual Style API
 # ============================================================
 
@@ -3567,7 +3635,7 @@ async def retry_shot_analysis(job_id: str, request: RetryBatchRequest = None):
         try:
             import json
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3-flash-preview",
                 contents=[batch_prompt, uploaded_file],
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json"

@@ -1,11 +1,11 @@
 // lib/api.ts
-// SocialSaver 前端 API 配置与调用函数
+// SocialSaver frontend API configuration and call functions
 
-// 后端 API 基础 URL
+// Backend API base URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://g3videoagent-production.up.railway.app";
 
 // ============================================================
-// 类型定义
+// Type Definitions
 // ============================================================
 
 export interface UploadResponse {
@@ -63,11 +63,11 @@ export interface AgentChatResponse {
 }
 
 // ============================================================
-// API 调用函数
+// API Call Functions
 // ============================================================
 
 /**
- * 上传视频并触发 AI 分析
+ * Upload video and trigger AI analysis
  */
 export async function uploadVideo(file: File): Promise<UploadResponse> {
   const formData = new FormData();
@@ -87,7 +87,7 @@ export async function uploadVideo(file: File): Promise<UploadResponse> {
 }
 
 /**
- * 获取 SocialSaver 格式的分镜表
+ * Get storyboard in SocialSaver format
  */
 export async function getStoryboard(jobId: string): Promise<SocialSaverStoryboard> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/storyboard`);
@@ -101,7 +101,7 @@ export async function getStoryboard(jobId: string): Promise<SocialSaverStoryboar
 }
 
 /**
- * 获取作业状态
+ * Get job status
  */
 export async function getJobStatus(jobId: string): Promise<JobStatus> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/status`);
@@ -115,7 +115,7 @@ export async function getJobStatus(jobId: string): Promise<JobStatus> {
 }
 
 /**
- * 获取原始 workflow（ReTake 格式）
+ * Get original workflow (ReTake format)
  */
 export async function getWorkflow(jobId?: string): Promise<any> {
   const url = jobId
@@ -133,7 +133,7 @@ export async function getWorkflow(jobId?: string): Promise<any> {
 }
 
 /**
- * 发送 Agent 聊天消息（修改分镜、风格等）
+ * Send Agent chat message (modify storyboard, style, etc.)
  */
 export async function sendAgentChat(message: string, jobId: string): Promise<AgentChatResponse> {
   const response = await fetch(`${API_BASE_URL}/api/agent/chat`, {
@@ -156,7 +156,7 @@ export async function sendAgentChat(message: string, jobId: string): Promise<Age
 }
 
 /**
- * 运行任务节点（stylize, video_generate, merge）
+ * Run task node (stylize, video_generate, merge)
  */
 export async function runTask(
   nodeType: "stylize" | "video_generate" | "merge",
@@ -182,13 +182,13 @@ export async function runTask(
 }
 
 /**
- * 批量串行生成视频（防止 Veo RPM 限流）
+ * Batch serial video generation (to prevent Veo RPM throttling)
  *
- * 特性：
- * - 串行执行：一个接一个，避免并发轰炸
- * - 冷却间隔：每个 shot 之间等待 30 秒
- * - 随机抖动：重试时增加 5-15 秒随机延迟
- * - 熔断机制：连续 3 次失败后暂停
+ * Features:
+ * - Serial execution: one at a time to avoid concurrent bombardment
+ * - Cooldown interval: 30 seconds wait between each shot
+ * - Random jitter: adds 5-15 seconds random delay on retry
+ * - Circuit breaker: pauses after 3 consecutive failures
  */
 export async function generateVideosBatch(
   jobId: string
@@ -206,7 +206,7 @@ export async function generateVideosBatch(
 }
 
 /**
- * 更新单个分镜
+ * Update a single shot
  */
 export async function updateShot(
   jobId: string,
@@ -234,18 +234,18 @@ export async function updateShot(
 }
 
 /**
- * 获取资源完整 URL
+ * Get full asset URL
  */
 export function getAssetUrl(jobId: string, assetPath: string): string {
   if (!assetPath) return "";
-  // 如果已经是完整 URL，直接返回
+  // If already a full URL, return as is
   if (assetPath.startsWith("http")) return assetPath;
-  // 构建完整 URL
+  // Build full URL
   return `${API_BASE_URL}/assets/${jobId}/${assetPath}`;
 }
 
 /**
- * 获取 Film IR Story Theme 分析结果
+ * Get Film IR Story Theme analysis result
  */
 export async function getStoryTheme(jobId: string): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/film_ir/story_theme`);
@@ -262,7 +262,7 @@ export async function getStoryTheme(jobId: string): Promise<any> {
 }
 
 /**
- * 获取 Film IR Narrative/Script Analysis 分析结果
+ * Get Film IR Narrative/Script Analysis result
  */
 export async function getScriptAnalysis(jobId: string): Promise<any> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/film_ir/narrative`);
@@ -279,7 +279,7 @@ export async function getScriptAnalysis(jobId: string): Promise<any> {
 }
 
 /**
- * 轮询作业状态直到完成
+ * Poll job status until completion
  */
 export async function pollJobStatus(
   jobId: string,
@@ -293,7 +293,7 @@ export async function pollJobStatus(
     const status = await getJobStatus(jobId);
     onUpdate(status);
 
-    // 检查是否所有任务都完成
+    // Check if all tasks are complete
     const allDone = status.runningCount === 0 &&
       (status.globalStages.analyze === "SUCCESS" || status.globalStages.analyze === "FAILED");
 
@@ -401,7 +401,7 @@ export interface RemixPromptsResponse {
 }
 
 /**
- * 触发 Intent Injection (M4 Remix)
+ * Trigger Intent Injection (M4 Remix)
  */
 export async function triggerRemix(
   jobId: string,
@@ -428,7 +428,7 @@ export async function triggerRemix(
 }
 
 /**
- * 获取 Remix 状态
+ * Get Remix status
  */
 export async function getRemixStatus(jobId: string): Promise<RemixStatusResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/status`);
@@ -442,7 +442,7 @@ export async function getRemixStatus(jobId: string): Promise<RemixStatusResponse
 }
 
 /**
- * 获取 Remix Diff (concrete vs remixed)
+ * Get Remix Diff (concrete vs remixed)
  */
 export async function getRemixDiff(jobId: string): Promise<RemixDiffResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/diff`);
@@ -456,7 +456,7 @@ export async function getRemixDiff(jobId: string): Promise<RemixDiffResponse> {
 }
 
 /**
- * 获取 Remix Prompts (T2I/I2V)
+ * Get Remix Prompts (T2I/I2V)
  */
 export async function getRemixPrompts(jobId: string): Promise<RemixPromptsResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/remix/prompts`);
@@ -470,7 +470,7 @@ export async function getRemixPrompts(jobId: string): Promise<RemixPromptsRespon
 }
 
 /**
- * 轮询 Remix 状态直到完成
+ * Poll Remix status until completion
  */
 export async function pollRemixStatus(
   jobId: string,
@@ -555,7 +555,7 @@ export interface GeneratedAssetsResponse {
 }
 
 /**
- * 触发资产生成 (M5)
+ * Trigger asset generation (M5)
  */
 export async function triggerAssetGeneration(jobId: string): Promise<AssetGenerationResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-assets`, {
@@ -571,7 +571,7 @@ export async function triggerAssetGeneration(jobId: string): Promise<AssetGenera
 }
 
 /**
- * 获取资产生成状态
+ * Get asset generation status
  */
 export async function getAssetGenerationStatus(jobId: string): Promise<AssetGenerationStatusResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/assets/status`);
@@ -585,7 +585,7 @@ export async function getAssetGenerationStatus(jobId: string): Promise<AssetGene
 }
 
 /**
- * 获取已生成的资产
+ * Get generated assets
  */
 export async function getGeneratedAssets(jobId: string): Promise<GeneratedAssetsResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/assets`);
@@ -599,13 +599,13 @@ export async function getGeneratedAssets(jobId: string): Promise<GeneratedAssets
 }
 
 /**
- * 轮询资产生成状态直到完成
+ * Poll asset generation status until completion
  */
 export async function pollAssetGeneration(
   jobId: string,
   onUpdate: (status: AssetGenerationStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟
+  maxAttempts: number = 150  // 150 × 3s = 7.5 minutes
 ): Promise<AssetGenerationStatusResponse> {
   let attempts = 0;
 
@@ -625,7 +625,7 @@ export async function pollAssetGeneration(
 }
 
 // ============================================================
-// Character Ledger API (角色清单)
+// Character Ledger API
 // ============================================================
 
 export interface CharacterEntity {
@@ -677,7 +677,7 @@ export interface CharacterLedgerResponse {
 }
 
 /**
- * 获取角色清单 (Character Ledger)
+ * Get Character Ledger
  */
 export async function getCharacterLedger(jobId: string): Promise<CharacterLedgerResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/character-ledger`);
@@ -704,7 +704,7 @@ export async function getCharacterLedger(jobId: string): Promise<CharacterLedger
 }
 
 /**
- * 绑定资产到实体
+ * Bind asset to entity
  */
 export async function bindAssetToEntity(
   jobId: string,
@@ -737,7 +737,7 @@ export async function bindAssetToEntity(
 }
 
 /**
- * 解绑资产
+ * Unbind asset
  */
 export async function unbindAsset(
   jobId: string,
@@ -756,7 +756,7 @@ export async function unbindAsset(
 }
 
 // ============================================================
-// M5.1: Single Entity Asset Management API (槽位级别操作)
+// M5.1: Single Entity Asset Management API (Slot-level operations)
 // ============================================================
 
 export interface EntityThreeViewSlot {
@@ -800,7 +800,7 @@ export interface GenerateViewsStatusResponse {
 }
 
 /**
- * 获取单个实体的状态（描述 + 三槽位）
+ * Get single entity state (description + three slots)
  */
 export async function getEntityState(jobId: string, anchorId: string): Promise<EntityState> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/entity/${anchorId}`);
@@ -814,7 +814,7 @@ export async function getEntityState(jobId: string, anchorId: string): Promise<E
 }
 
 /**
- * 更新实体描述
+ * Update entity description
  */
 export async function updateEntityDescription(
   jobId: string,
@@ -838,7 +838,7 @@ export async function updateEntityDescription(
 }
 
 /**
- * 上传图片到特定槽位
+ * Upload image to specific slot
  */
 export async function uploadEntityView(
   jobId: string,
@@ -863,7 +863,7 @@ export async function uploadEntityView(
 }
 
 /**
- * AI 生成缺失的槽位
+ * AI generate missing slots
  */
 export async function generateEntityViews(
   jobId: string,
@@ -887,7 +887,7 @@ export async function generateEntityViews(
 }
 
 /**
- * 获取生成状态
+ * Get generation status
  */
 export async function getGenerateViewsStatus(
   jobId: string,
@@ -904,14 +904,14 @@ export async function getGenerateViewsStatus(
 }
 
 /**
- * 轮询生成状态直到完成
+ * Poll generation status until completion
  */
 export async function pollGenerateViewsStatus(
   jobId: string,
   anchorId: string,
   onUpdate: (status: GenerateViewsStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟，足够生成 3 个视图
+  maxAttempts: number = 150  // 150 × 3s = 7.5 minutes, enough for 3 views
 ): Promise<GenerateViewsStatusResponse> {
   let attempts = 0;
 
@@ -931,9 +931,80 @@ export async function pollGenerateViewsStatus(
 }
 
 // ============================================================
-// Visual Style API (视觉风格配置)
+// Visual Style API (Visual style configuration)
 // ============================================================
 
+// Sound Design Types
+export interface SoundDesignConfig {
+  voiceStyle: string;
+  voiceTone: string;
+  backgroundMusic: string;
+  soundEffects: string;
+  enableAudioGeneration: boolean;
+  confirmed: boolean;
+}
+
+export interface SoundDesignResponse {
+  jobId: string;
+  soundDesign: SoundDesignConfig;
+}
+
+/**
+ * Get sound design configuration
+ */
+export async function getSoundDesign(jobId: string): Promise<SoundDesignResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/sound-design`);
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return {
+        jobId,
+        soundDesign: {
+          voiceStyle: "Natural",
+          voiceTone: "Warm and friendly",
+          backgroundMusic: "Upbeat, modern electronic",
+          soundEffects: "Subtle, ambient",
+          enableAudioGeneration: true,
+          confirmed: false,
+        },
+      };
+    }
+    const error = await response.json().catch(() => ({ detail: "Failed to fetch sound design" }));
+    throw new Error(error.detail || "Failed to fetch sound design");
+  }
+
+  // Backend returns config directly, wrap it in response format
+  const config = await response.json();
+  return {
+    jobId,
+    soundDesign: config,
+  };
+}
+
+/**
+ * Save sound design configuration
+ */
+export async function saveSoundDesign(
+  jobId: string,
+  config: Partial<SoundDesignConfig>
+): Promise<{ status: string; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/sound-design`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(config),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to save sound design" }));
+    throw new Error(error.detail || "Failed to save sound design");
+  }
+
+  return response.json();
+}
+
+// Visual Style Types
 export interface VisualStyleConfig {
   artStyle: string;
   colorPalette: string;
@@ -949,7 +1020,7 @@ export interface VisualStyleResponse {
 }
 
 /**
- * 获取视觉风格配置
+ * Get visual style configuration
  */
 export async function getVisualStyle(jobId: string): Promise<VisualStyleResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/visual-style`);
@@ -977,7 +1048,7 @@ export async function getVisualStyle(jobId: string): Promise<VisualStyleResponse
 }
 
 /**
- * 保存视觉风格配置
+ * Save visual style configuration
  */
 export async function saveVisualStyle(
   jobId: string,
@@ -1000,7 +1071,7 @@ export async function saveVisualStyle(
 }
 
 /**
- * 上传视觉参考图片
+ * Upload visual reference image
  */
 export async function uploadReferenceImage(
   jobId: string,
@@ -1028,7 +1099,7 @@ export async function uploadReferenceImage(
 }
 
 /**
- * 删除视觉参考图片
+ * Delete visual reference image
  */
 export async function deleteReferenceImage(
   jobId: string,
@@ -1047,7 +1118,7 @@ export async function deleteReferenceImage(
 }
 
 // ============================================================
-// Product Three-Views API (产品三视图)
+// Product Three-Views API
 // ============================================================
 
 export interface ProductThreeViews {
@@ -1097,7 +1168,7 @@ export interface ProductGenerationStatusResponse {
 }
 
 /**
- * 获取所有产品列表
+ * Get all products list
  */
 export async function getProducts(jobId: string): Promise<ProductsResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products`);
@@ -1114,7 +1185,7 @@ export async function getProducts(jobId: string): Promise<ProductsResponse> {
 }
 
 /**
- * 创建新产品
+ * Create new product
  */
 export async function createProduct(
   jobId: string,
@@ -1138,7 +1209,7 @@ export async function createProduct(
 }
 
 /**
- * 更新产品信息
+ * Update product information
  */
 export async function updateProduct(
   jobId: string,
@@ -1162,7 +1233,7 @@ export async function updateProduct(
 }
 
 /**
- * 删除产品
+ * Delete product
  */
 export async function deleteProduct(
   jobId: string,
@@ -1181,7 +1252,7 @@ export async function deleteProduct(
 }
 
 /**
- * 获取产品详细状态
+ * Get product detailed state
  */
 export async function getProductState(jobId: string, anchorId: string): Promise<ProductStateResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/products/${anchorId}`);
@@ -1195,7 +1266,7 @@ export async function getProductState(jobId: string, anchorId: string): Promise<
 }
 
 /**
- * 上传产品视图图片
+ * Upload product view image
  */
 export async function uploadProductView(
   jobId: string,
@@ -1225,7 +1296,7 @@ export async function uploadProductView(
 }
 
 /**
- * AI 生成产品三视图
+ * AI generate product three-views
  */
 export async function generateProductViews(
   jobId: string,
@@ -1249,7 +1320,7 @@ export async function generateProductViews(
 }
 
 /**
- * 获取产品生成状态 (使用通用的生成状态端点)
+ * Get product generation status (uses generic generation status endpoint)
  */
 export async function getProductGenerationStatus(
   jobId: string,
@@ -1266,14 +1337,14 @@ export async function getProductGenerationStatus(
 }
 
 /**
- * 轮询产品生成状态直到完成
+ * Poll product generation status until completion
  */
 export async function pollProductGenerationStatus(
   jobId: string,
   anchorId: string,
   onUpdate: (status: ProductGenerationStatusResponse) => void,
   intervalMs: number = 3000,
-  maxAttempts: number = 150  // 150 × 3s = 7.5 分钟
+  maxAttempts: number = 150  // 150 × 3s = 7.5 minutes
 ): Promise<ProductGenerationStatusResponse> {
   let attempts = 0;
 
@@ -1342,7 +1413,7 @@ export interface StoryboardChatResponse {
 }
 
 /**
- * 生成 Remix Storyboard
+ * Generate Remix Storyboard
  */
 export async function generateRemixStoryboard(jobId: string): Promise<RemixStoryboardResponse> {
   const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/generate-remix-storyboard`, {
@@ -1358,7 +1429,7 @@ export async function generateRemixStoryboard(jobId: string): Promise<RemixStory
 }
 
 /**
- * Storyboard AI Chat - 自然语言修改分镜
+ * Storyboard AI Chat - modify storyboard with natural language
  */
 export async function storyboardChat(
   jobId: string,
@@ -1391,7 +1462,7 @@ export interface RegenerateFramesResponse {
 }
 
 /**
- * 重新生成指定分镜的首帧图片
+ * Regenerate first frame image for specified shots
  */
 export async function regenerateStoryboardFrames(
   jobId: string,
@@ -1415,7 +1486,7 @@ export async function regenerateStoryboardFrames(
 
 
 // ============================================================
-// Storyboard Finalize API - 视频生成前的最终确认
+// Storyboard Finalize API - Final confirmation before video generation
 // ============================================================
 
 export interface FinalizeStoryboardResponse {
@@ -1433,10 +1504,10 @@ export interface FinalizeStoryboardResponse {
 }
 
 /**
- * 🎬 视频生成前的最终数据同步
+ * 🎬 Final data sync before video generation
  *
- * 确保 Film IR 包含所有 Storyboard Chat 的修改
- * 必须在启动视频生成前调用
+ * Ensures Film IR contains all Storyboard Chat modifications
+ * Must be called before starting video generation
  */
 export async function finalizeStoryboard(
   jobId: string,

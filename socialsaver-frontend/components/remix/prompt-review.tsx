@@ -94,7 +94,7 @@ export function PromptReview({ promptsData, onPromptEdit }: PromptReviewProps) {
                 Text-to-Image Prompts (Imagen 4.0)
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                用于生成每个分镜的首帧静态图片
+                Used to generate the first frame image for each shot
               </p>
             </CardHeader>
             <CardContent>
@@ -134,7 +134,7 @@ export function PromptReview({ promptsData, onPromptEdit }: PromptReviewProps) {
                 Image-to-Video Prompts (Veo 3.1)
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                用于将首帧动画化生成视频片段
+                Used to animate the first frame into video clips
               </p>
             </CardHeader>
             <CardContent>
@@ -173,7 +173,7 @@ export function PromptReview({ promptsData, onPromptEdit }: PromptReviewProps) {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <User className="w-4 h-4" />
-                  角色 ({promptsData.identityAnchors.characters.length})
+                  Characters ({promptsData.identityAnchors.characters.length})
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -192,7 +192,7 @@ export function PromptReview({ promptsData, onPromptEdit }: PromptReviewProps) {
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
                   <MapPin className="w-4 h-4" />
-                  环境 ({promptsData.identityAnchors.environments.length})
+                  Environments ({promptsData.identityAnchors.environments.length})
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -308,11 +308,11 @@ function T2IPromptCard({
                 <div className="flex gap-2">
                   <Button size="sm" onClick={onSaveEdit}>
                     <Check className="w-3 h-3 mr-1" />
-                    保存
+                    Save
                   </Button>
                   <Button size="sm" variant="outline" onClick={onCancelEdit}>
                     <X className="w-3 h-3 mr-1" />
-                    取消
+                    Cancel
                   </Button>
                 </div>
               </>
@@ -324,12 +324,12 @@ function T2IPromptCard({
                 <div className="flex gap-2">
                   <Button size="sm" variant="ghost" onClick={onCopy}>
                     <Copy className="w-3 h-3 mr-1" />
-                    复制
+                    Copy
                   </Button>
                   {canEdit && (
                     <Button size="sm" variant="ghost" onClick={onStartEdit}>
                       <Edit2 className="w-3 h-3 mr-1" />
-                      编辑
+                      Edit
                     </Button>
                   )}
                 </div>
@@ -407,7 +407,7 @@ function I2VPromptCard({
             </Badge>
             {prompt.firstFrameInheritance && (
               <Badge className="text-xs bg-purple-500/10 text-purple-500">
-                首帧继承
+                First Frame Inheritance
               </Badge>
             )}
           </div>
@@ -424,11 +424,11 @@ function I2VPromptCard({
                 <div className="flex gap-2">
                   <Button size="sm" onClick={onSaveEdit}>
                     <Check className="w-3 h-3 mr-1" />
-                    保存
+                    Save
                   </Button>
                   <Button size="sm" variant="outline" onClick={onCancelEdit}>
                     <X className="w-3 h-3 mr-1" />
-                    取消
+                    Cancel
                   </Button>
                 </div>
               </>
@@ -440,12 +440,12 @@ function I2VPromptCard({
                 <div className="flex gap-2">
                   <Button size="sm" variant="ghost" onClick={onCopy}>
                     <Copy className="w-3 h-3 mr-1" />
-                    复制
+                    Copy
                   </Button>
                   {canEdit && (
                     <Button size="sm" variant="ghost" onClick={onStartEdit}>
                       <Edit2 className="w-3 h-3 mr-1" />
-                      编辑
+                      Edit
                     </Button>
                   )}
                 </div>
@@ -495,7 +495,7 @@ function AnchorCard({ anchor, type }: AnchorCardProps) {
         <div className="px-3 pb-3 space-y-2 border-t pt-3">
           {anchor.originalPlaceholder && (
             <div className="text-xs text-muted-foreground">
-              占位符: <code className="bg-muted px-1 rounded">{anchor.originalPlaceholder}</code>
+              Placeholder: <code className="bg-muted px-1 rounded">{anchor.originalPlaceholder}</code>
             </div>
           )}
           <div className="p-3 bg-muted rounded-lg">
@@ -503,12 +503,12 @@ function AnchorCard({ anchor, type }: AnchorCardProps) {
           </div>
           {anchor.styleAdaptation && (
             <div className="text-xs text-muted-foreground">
-              风格适配: {anchor.styleAdaptation}
+              Style Adaptation: {anchor.styleAdaptation}
             </div>
           )}
           {anchor.atmosphericConditions && (
             <div className="text-xs text-muted-foreground">
-              大气条件: {anchor.atmosphericConditions}
+              Atmospheric Conditions: {anchor.atmosphericConditions}
             </div>
           )}
         </div>

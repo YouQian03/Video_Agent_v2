@@ -31,7 +31,7 @@
 ### 1.5 主要依赖的外部服务
 | 服务 | 用途 | 模型/版本 |
 |-----|------|----------|
-| Google Gemini | 视频分析、Agent 决策 | gemini-2.0-flash |
+| Google Gemini | 视频分析、Agent 决策 | gemini-3-flash-preview |
 | Google Imagen | Style Frame 生成 | imagen-4.0-generate-001 |
 | Google Veo | Image-to-Video 生成 | veo-3.1-generate-preview |
 | FFmpeg | 视频切割、帧提取、合并 | 系统安装版本 |

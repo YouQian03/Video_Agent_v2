@@ -300,7 +300,7 @@ def main():
 
     print("开始分析视频（生成分镜 JSON）…")
     response = client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-3-flash-preview",
         contents=[DIRECTOR_METAPROMPT, video_file],
     )
 

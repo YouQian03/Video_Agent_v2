@@ -26,15 +26,15 @@ export function AssetPreview({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "SUCCESS":
-        return <Badge className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" />完成</Badge>;
+        return <Badge className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" />Done</Badge>;
       case "GENERATING":
-        return <Badge className="bg-blue-500"><Loader2 className="w-3 h-3 mr-1 animate-spin" />生成中</Badge>;
+        return <Badge className="bg-blue-500"><Loader2 className="w-3 h-3 mr-1 animate-spin" />Generating</Badge>;
       case "FAILED":
-        return <Badge className="bg-red-500"><XCircle className="w-3 h-3 mr-1" />失败</Badge>;
+        return <Badge className="bg-red-500"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>;
       case "PARTIAL":
-        return <Badge className="bg-yellow-500">部分完成</Badge>;
+        return <Badge className="bg-yellow-500">Partial</Badge>;
       default:
-        return <Badge variant="secondary">未开始</Badge>;
+        return <Badge variant="secondary">Not Started</Badge>;
     }
   };
 
@@ -49,9 +49,9 @@ export function AssetPreview({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold">生成的资产</h3>
+          <h3 className="text-lg font-semibold">Generated Assets</h3>
           <p className="text-sm text-muted-foreground">
-            角色三视图和环境参考图
+            Character three-views and environment reference images
           </p>
         </div>
         {onRegenerate && (
@@ -66,7 +66,7 @@ export function AssetPreview({
             ) : (
               <RefreshCw className="w-4 h-4 mr-2" />
             )}
-            重新生成
+            Regenerate
           </Button>
         )}
       </div>
@@ -77,7 +77,7 @@ export function AssetPreview({
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <User className="w-4 h-4" />
-              角色 ({characters.length})
+              Characters ({characters.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -95,7 +95,7 @@ export function AssetPreview({
                 <div className="grid grid-cols-3 gap-3">
                   {/* Front View */}
                   <div className="space-y-1">
-                    <p className="text-xs text-center text-muted-foreground">正面</p>
+                    <p className="text-xs text-center text-muted-foreground">Front</p>
                     <div className="aspect-video relative overflow-hidden rounded-lg border bg-muted">
                       {char.threeViews.front ? (
                         <Image
@@ -113,7 +113,7 @@ export function AssetPreview({
 
                   {/* Side View */}
                   <div className="space-y-1">
-                    <p className="text-xs text-center text-muted-foreground">侧面</p>
+                    <p className="text-xs text-center text-muted-foreground">Side</p>
                     <div className="aspect-video relative overflow-hidden rounded-lg border bg-muted">
                       {char.threeViews.side ? (
                         <Image
@@ -131,7 +131,7 @@ export function AssetPreview({
 
                   {/* Back View */}
                   <div className="space-y-1">
-                    <p className="text-xs text-center text-muted-foreground">背面</p>
+                    <p className="text-xs text-center text-muted-foreground">Back</p>
                     <div className="aspect-video relative overflow-hidden rounded-lg border bg-muted">
                       {char.threeViews.back ? (
                         <Image
@@ -159,7 +159,7 @@ export function AssetPreview({
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <MapPin className="w-4 h-4" />
-              环境 ({environments.length})
+              Environments ({environments.length})
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -198,9 +198,9 @@ export function AssetPreview({
         <Card>
           <CardContent className="py-8 text-center">
             <ImageIcon className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-            <p className="text-muted-foreground">暂无生成的资产</p>
+            <p className="text-muted-foreground">No generated assets yet</p>
             <p className="text-sm text-muted-foreground mt-1">
-              请先运行 Intent Injection 生成 Identity Anchors
+              Please run Intent Injection to generate Identity Anchors first
             </p>
           </CardContent>
         </Card>
@@ -226,7 +226,7 @@ export function AssetPreview({
               className="absolute top-2 right-2"
               onClick={() => setSelectedImage(null)}
             >
-              关闭
+              Close
             </Button>
           </div>
         </div>

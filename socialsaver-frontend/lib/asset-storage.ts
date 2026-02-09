@@ -107,7 +107,7 @@ export function saveStoryboardToLibrary(
   sourceVideo?: { name: string; size: number; url?: string },
   thumbnail?: string
 ): Asset {
-  // 如果没有提供 thumbnail，尝试从 storyboard 第一个 shot 获取
+  // If no thumbnail provided, try to get it from the first shot of storyboard
   const finalThumbnail = thumbnail || (data.storyboard && data.storyboard[0]?.firstFrameImage) || undefined
 
   return addAsset({

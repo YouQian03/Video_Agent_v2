@@ -446,7 +446,7 @@ class FilmIRManager:
         # 调用 Gemini API
         print(f"🤖 Calling Gemini API for Story Theme analysis...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt, uploaded_file],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -483,7 +483,7 @@ class FilmIRManager:
         # 调用 Gemini API
         print(f"🤖 Calling Gemini API for Narrative extraction...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt, uploaded_file],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -529,7 +529,7 @@ class FilmIRManager:
         )
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[phase1_prompt, uploaded_file],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -589,7 +589,7 @@ class FilmIRManager:
                         time.sleep(2)
 
                     response = client.models.generate_content(
-                        model="gemini-2.0-flash",
+                        model="gemini-3-flash-preview",
                         contents=[batch_prompt, uploaded_file],
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json"
@@ -677,7 +677,7 @@ class FilmIRManager:
 
         print(f"🤖 Calling Gemini API for Character Clustering...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1111,7 +1111,7 @@ class FilmIRManager:
         # 调用 Gemini API
         print(f"🤖 Calling Gemini API for intent parsing...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1211,7 +1211,7 @@ class FilmIRManager:
         # 调用 Gemini API
         print(f"🤖 Calling Gemini API for intent fusion...")
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1447,7 +1447,7 @@ Output ONLY valid JSON. No markdown, no explanation.
 """
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -1546,7 +1546,7 @@ Output ONLY valid JSON array. No markdown.
 """
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"

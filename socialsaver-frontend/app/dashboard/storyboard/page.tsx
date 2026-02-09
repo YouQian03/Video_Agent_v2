@@ -336,7 +336,7 @@ export default function StoryboardAnalysisPage() {
         storyboard: processedStoryboard,
       }
 
-      // 保存源视频文件名用于后续构建 URL
+      // Save source video filename for URL construction later
       setSourceVideoFilename(storyboardData.sourceVideo || null)
 
       // 🔌 Fetch Character Ledger
@@ -404,12 +404,12 @@ export default function StoryboardAnalysisPage() {
   const handleSaveToLibrary = (name: string, tags: string[]) => {
     if (!analysisResult) return
 
-    // 构建源视频 URL（如果有 job_id 和 sourceVideoFilename）
+    // Build source video URL (if job_id and sourceVideoFilename exist)
     const sourceVideoUrl = currentJobId && sourceVideoFilename
       ? getAssetUrl(currentJobId, sourceVideoFilename)
       : undefined
 
-    // 获取第一个 shot 的 firstFrameImage 作为缩略图
+    // Get the first shot's firstFrameImage as thumbnail
     const thumbnail = analysisResult.storyboard[0]?.firstFrameImage || undefined
 
     saveStoryboardToLibrary(
