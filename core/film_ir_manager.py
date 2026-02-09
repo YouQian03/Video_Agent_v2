@@ -958,7 +958,7 @@ class FilmIRManager:
         # Step 1: 角色提取 (Character Extraction)
         # ============================================================
         char_prompt = CHARACTER_EXTRACTION_PROMPT.replace("{shot_subjects}", shot_subjects_text)
-        print(f"🎭 [Step 1] Extracting characters...")
+        print(f"🎭 [Step 1] Extracting characters...", flush=True)
 
         char_response = gemini_call_with_retry(
             client=client,
