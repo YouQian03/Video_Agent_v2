@@ -1113,6 +1113,7 @@ def generate_storyboard_frame(
     char_ids = applied_anchors.get("characters", [])
     char_descs = []
     char_reference_images = []
+    char_substitutions = []  # Track characters with uploaded reference images for prompt rewriting
     if char_ids and identity_anchors.get("characters"):
         for char in identity_anchors["characters"]:
             if char.get("anchorId") in char_ids:
@@ -1164,6 +1165,14 @@ def generate_storyboard_frame(
                     print(f"   🔗 [Anchor] Applied character: {anchor_id} -> {desc[:50]}...")
                 elif has_uploaded_image:
                     print(f"   🖼️ [Anchor] Character {anchor_id}: using uploaded image only (no description)")
+
+                # Track characters with uploaded reference images for prompt rewriting
+                if has_uploaded_image and (desc or user_desc):
+                    char_substitutions.append({
+                        "anchor_id": anchor_id,
+                        "anchor_name": char.get("anchorName", "") or char.get("displayName", "") or char.get("name", ""),
+                        "new_desc": (desc or user_desc)
+                    })
 
     # 2. 收集环境描述 + 三视图参考图片 (same priority logic as characters)
     env_ids = applied_anchors.get("environments", [])
@@ -1259,9 +1268,27 @@ def generate_storyboard_frame(
             prompt_parts.append("TASK: Edit the provided reference image to match this description.")
             prompt_parts.append("IMPORTANT: You MUST modify the image. Do NOT return the original unchanged.")
 
+            # ⚠️ 角色替换：如果有替换角色，先声明旧描述作废，再给场景文本
+            if char_substitutions:
+                prompt_parts.append("⚠️ CHARACTER REPLACEMENT OVERRIDE (READ THIS FIRST):")
+                for sub in char_substitutions:
+                    prompt_parts.append(
+                        f"  The character originally called '{sub['anchor_name']}' has been COMPLETELY REPLACED by a NEW character. "
+                        f"ALL visual descriptions of '{sub['anchor_name']}' in the scene text below are OUTDATED and WRONG — "
+                        f"ignore any mentions of their old appearance (fur color, markings, body type, clothing, etc). "
+                        f"The ONLY correct appearance for this character is shown in the attached reference images for {sub['anchor_id']}. "
+                        f"Copy the character's look from those reference images exactly."
+                    )
+                    print(f"   🔄 [Substitution] Character '{sub['anchor_name']}' -> use reference images for {sub['anchor_id']}")
+
             # 场景描述（这里包含了用户的修改请求）
             if t2i_prompt:
-                prompt_parts.append(f"TARGET SCENE: {t2i_prompt}")
+                if char_substitutions:
+                    # 标注场景文本中角色外貌已过时
+                    sub_names = ", ".join(f"'{s['anchor_name']}'" for s in char_substitutions)
+                    prompt_parts.append(f"TARGET SCENE (WARNING: appearance descriptions for {sub_names} in this text are outdated — use reference images instead): {t2i_prompt}")
+                else:
+                    prompt_parts.append(f"TARGET SCENE: {t2i_prompt}")
 
             # 参考图说明（告诉 Gemini 每张图的用途）
             if all_reference_images:
@@ -1272,18 +1299,22 @@ def generate_storyboard_frame(
                     prompt_parts.append(f"CRITICAL - CHARACTER REFERENCES (HIGHEST PRIORITY): I have provided {len(char_refs)} character reference images:")
                     for ref in char_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
-                    prompt_parts.append("The character's face, hair, clothing, and accessories MUST match these reference images EXACTLY. If the TARGET SCENE description conflicts with the reference images (e.g., different clothing or accessories), ALWAYS follow the reference images instead.")
+                    prompt_parts.append("The character's appearance MUST match these reference images EXACTLY. ANY text description that contradicts these images is outdated and must be ignored.")
 
                 if env_refs:
                     prompt_parts.append(f"ENVIRONMENT REFERENCES: I have provided {len(env_refs)} environment reference images:")
                     for ref in env_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
 
-            # 角色详细描述
-            if char_descs:
+            # 角色详细描述 — 有替换时只给新描述，跳过旧的
+            if char_descs and not char_substitutions:
                 prompt_parts.append("CHARACTER DETAILS:")
                 for desc in char_descs:
                     prompt_parts.append(f"  {desc}")
+            elif char_substitutions:
+                prompt_parts.append("CHARACTER DETAILS (from reference images):")
+                for sub in char_substitutions:
+                    prompt_parts.append(f"  [{sub['anchor_id']}]: Appearance defined by attached reference images. {sub['new_desc'][:200]}")
 
             # 环境详细描述
             if env_descs:
@@ -1297,7 +1328,7 @@ def generate_storyboard_frame(
 
             # 编辑规则
             prompt_parts.append("EDITING RULES (in priority order):")
-            prompt_parts.append("1. CHARACTER APPEARANCE: If character reference images are provided, the character's appearance (face, hair, clothing, accessories) MUST match the reference images. This overrides any conflicting descriptions in TARGET SCENE.")
+            prompt_parts.append("1. CHARACTER APPEARANCE: Character appearance MUST match the attached reference images. This OVERRIDES any conflicting text descriptions in TARGET SCENE. If the text says one thing and the image shows another, FOLLOW THE IMAGE.")
             prompt_parts.append("2. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
             prompt_parts.append("3. SCENE: Apply scene context (setting, action, mood) from TARGET SCENE, but do NOT change character appearance away from the reference images.")
             prompt_parts.append("4. Generate a high-quality cinematic frame.")
@@ -1347,16 +1378,28 @@ def generate_storyboard_frame(
 
             prompt_parts.append("Generate a cinematic scene based on the provided reference images and description.")
 
+            # ⚠️ 角色替换覆盖指令
+            if char_substitutions:
+                prompt_parts.append("⚠️ CHARACTER REPLACEMENT OVERRIDE (READ THIS FIRST):")
+                for sub in char_substitutions:
+                    prompt_parts.append(
+                        f"  The character originally called '{sub['anchor_name']}' has been COMPLETELY REPLACED by a NEW character. "
+                        f"ALL visual descriptions of '{sub['anchor_name']}' in the scene text below are OUTDATED and WRONG — "
+                        f"ignore any mentions of their old appearance (fur color, markings, body type, clothing, etc). "
+                        f"The ONLY correct appearance for this character is shown in the attached reference images for {sub['anchor_id']}. "
+                        f"Copy the character's look from those reference images exactly."
+                    )
+
             # 参考图说明
             if all_reference_images:
                 char_refs = [r for r in all_reference_images if 'char' in r['anchor_id'].lower()]
                 env_refs = [r for r in all_reference_images if 'env' in r['anchor_id'].lower()]
 
                 if char_refs:
-                    prompt_parts.append(f"I have provided {len(char_refs)} character reference images:")
+                    prompt_parts.append(f"CHARACTER REFERENCES (HIGHEST PRIORITY): I have provided {len(char_refs)} character reference images:")
                     for ref in char_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
-                    prompt_parts.append("The characters should look exactly like those in the reference images.")
+                    prompt_parts.append("The characters MUST look exactly like those in the reference images. Any conflicting text descriptions are outdated.")
 
                 if env_refs:
                     prompt_parts.append(f"I have provided {len(env_refs)} environment reference images:")
@@ -1365,12 +1408,19 @@ def generate_storyboard_frame(
 
             # 场景描述
             if t2i_prompt:
-                prompt_parts.append(f"Scene description: {t2i_prompt}")
+                if char_substitutions:
+                    sub_names = ", ".join(f"'{s['anchor_name']}'" for s in char_substitutions)
+                    prompt_parts.append(f"Scene description (WARNING: appearance descriptions for {sub_names} are outdated — use reference images instead): {t2i_prompt}")
+                else:
+                    prompt_parts.append(f"Scene description: {t2i_prompt}")
 
-            # 角色详细描述
-            if char_descs:
+            # 角色详细描述 — 有替换时只给新描述
+            if char_descs and not char_substitutions:
                 for desc in char_descs:
                     prompt_parts.append(f"Character details: {desc}")
+            elif char_substitutions:
+                for sub in char_substitutions:
+                    prompt_parts.append(f"Character details [{sub['anchor_id']}]: Appearance defined by attached reference images. {sub['new_desc'][:200]}")
 
             # 环境详细描述
             if env_descs:
