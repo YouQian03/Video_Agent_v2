@@ -1,102 +1,61 @@
 // lib/asset-storage.ts
-// Asset Library localStorage persistence
+// Asset Library — server-side persistence via backend API
 
-import type { Asset, AssetType, StoryThemeAnalysis, ScriptAnalysis, StoryboardShot } from "./types/remix"
-
-const STORAGE_KEY = "socialsaver_asset_library"
+import type { Asset, StoryThemeAnalysis, ScriptAnalysis, StoryboardShot } from "./types/remix"
+import {
+  fetchLibraryAssets,
+  createLibraryAsset,
+  updateLibraryAsset as apiUpdateAsset,
+  deleteLibraryAsset,
+} from "./api"
 
 /**
- * Get all assets from localStorage
+ * Get all assets from backend
  */
-export function getAssets(): Asset[] {
-  if (typeof window === "undefined") return []
-
+export async function getAssets(): Promise<Asset[]> {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (!stored) return []
-    return JSON.parse(stored)
+    return await fetchLibraryAssets()
   } catch (e) {
-    console.error("Failed to load assets from localStorage:", e)
+    console.error("Failed to load assets from backend:", e)
     return []
   }
 }
 
 /**
- * Save all assets to localStorage
+ * Add a new asset to the library (backend auto-generates id/timestamps)
  */
-export function saveAssets(assets: Asset[]): void {
-  if (typeof window === "undefined") return
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(assets))
-  } catch (e) {
-    console.error("Failed to save assets to localStorage:", e)
-  }
-}
-
-/**
- * Add a new asset to the library
- */
-export function addAsset(asset: Omit<Asset, "id" | "createdAt" | "updatedAt">): Asset {
-  const assets = getAssets()
-
-  const newAsset: Asset = {
-    ...asset,
-    id: `asset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  } as Asset
-
-  assets.unshift(newAsset) // Add to beginning
-  saveAssets(assets)
-
-  return newAsset
+export async function addAsset(asset: Omit<Asset, "id" | "createdAt" | "updatedAt">): Promise<Asset> {
+  return await createLibraryAsset(asset as Record<string, any>)
 }
 
 /**
  * Update an existing asset
  */
-export function updateAsset(id: string, updates: Partial<Asset>): Asset | null {
-  const assets = getAssets()
-  const index = assets.findIndex(a => a.id === id)
-
-  if (index === -1) return null
-
-  assets[index] = {
-    ...assets[index],
-    ...updates,
-    updatedAt: new Date().toISOString(),
-  } as Asset
-
-  saveAssets(assets)
-  return assets[index]
+export async function updateAsset(id: string, updates: Partial<Asset>): Promise<Asset | null> {
+  try {
+    return await apiUpdateAsset(id, updates as Record<string, any>)
+  } catch (e) {
+    console.error("Failed to update asset:", e)
+    return null
+  }
 }
 
 /**
  * Delete an asset
  */
-export function deleteAsset(id: string): boolean {
-  const assets = getAssets()
-  const filtered = assets.filter(a => a.id !== id)
-
-  if (filtered.length === assets.length) return false
-
-  saveAssets(filtered)
-  return true
-}
-
-/**
- * Get a single asset by ID
- */
-export function getAssetById(id: string): Asset | null {
-  const assets = getAssets()
-  return assets.find(a => a.id === id) || null
+export async function deleteAsset(id: string): Promise<boolean> {
+  try {
+    return await deleteLibraryAsset(id)
+  } catch (e) {
+    console.error("Failed to delete asset:", e)
+    return false
+  }
 }
 
 /**
  * Helper: Save a storyboard analysis result to library
  */
-export function saveStoryboardToLibrary(
+export async function saveStoryboardToLibrary(
   name: string,
   tags: string[],
   data: {
@@ -106,8 +65,7 @@ export function saveStoryboardToLibrary(
   },
   sourceVideo?: { name: string; size: number; url?: string },
   thumbnail?: string
-): Asset {
-  // If no thumbnail provided, try to get it from the first shot of storyboard
+): Promise<Asset> {
   const finalThumbnail = thumbnail || (data.storyboard && data.storyboard[0]?.firstFrameImage) || undefined
 
   return addAsset({
@@ -123,12 +81,12 @@ export function saveStoryboardToLibrary(
 /**
  * Helper: Save a single storyboard shot to library
  */
-export function saveShotToLibrary(
+export async function saveShotToLibrary(
   name: string,
   tags: string[],
   shot: StoryboardShot,
   sourceVideo?: { name: string; size: number; url?: string }
-): Asset {
+): Promise<Asset> {
   return addAsset({
     name,
     type: "storyboard",
@@ -142,12 +100,12 @@ export function saveShotToLibrary(
 /**
  * Helper: Save a theme analysis to library
  */
-export function saveThemeToLibrary(
+export async function saveThemeToLibrary(
   name: string,
   tags: string[],
   data: StoryThemeAnalysis,
   sourceVideo?: { name: string; size: number; url?: string }
-): Asset {
+): Promise<Asset> {
   return addAsset({
     name,
     type: "theme",
@@ -160,12 +118,12 @@ export function saveThemeToLibrary(
 /**
  * Helper: Save a script analysis to library
  */
-export function saveScriptToLibrary(
+export async function saveScriptToLibrary(
   name: string,
   tags: string[],
   data: ScriptAnalysis,
   sourceVideo?: { name: string; size: number; url?: string }
-): Asset {
+): Promise<Asset> {
   return addAsset({
     name,
     type: "script",
@@ -178,18 +136,18 @@ export function saveScriptToLibrary(
 /**
  * Helper: Save a generated video to library
  */
-export function saveVideoToLibrary(
+export async function saveVideoToLibrary(
   name: string,
   tags: string[],
   videoData: { url: string; duration: number; format: string; resolution: string },
   sourceVideo?: { name: string; size: number; url?: string }
-): Asset {
+): Promise<Asset> {
   return addAsset({
     name,
     type: "video",
     tags,
     data: videoData,
     sourceVideo,
-    thumbnail: undefined, // Could add video thumbnail later
+    thumbnail: undefined,
   } as Omit<Asset, "id" | "createdAt" | "updatedAt">)
 }

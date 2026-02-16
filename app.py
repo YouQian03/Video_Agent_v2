@@ -4085,6 +4085,113 @@ async def retry_shot_analysis(job_id: str, request: RetryBatchRequest = None):
     }
 
 
+# ============================================================
+# Asset Library API — server-side persistence
+# ============================================================
+
+ASSET_LIBRARY_PATH = Path("jobs") / "asset_library.json"
+
+
+def _load_asset_library() -> list:
+    """Load asset library with retry (same pattern as workflow_io)."""
+    for attempt in range(3):
+        try:
+            if not ASSET_LIBRARY_PATH.exists():
+                return []
+            content = ASSET_LIBRARY_PATH.read_text(encoding="utf-8")
+            if not content or not content.strip():
+                if attempt < 2:
+                    import time; time.sleep(0.1 * (attempt + 1))
+                    continue
+                return []
+            return json.loads(content)
+        except (json.JSONDecodeError, Exception):
+            if attempt < 2:
+                import time; time.sleep(0.1 * (attempt + 1))
+                continue
+            return []
+    return []
+
+
+def _save_asset_library(assets: list) -> None:
+    """Atomically write asset library JSON."""
+    ASSET_LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(assets, ensure_ascii=False, indent=2)
+    temp_path = ASSET_LIBRARY_PATH.with_suffix(".json.tmp")
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        shutil.move(str(temp_path), str(ASSET_LIBRARY_PATH))
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        ASSET_LIBRARY_PATH.write_text(content, encoding="utf-8")
+
+
+@app.get("/api/library/assets")
+async def list_library_assets(type: Optional[str] = None):
+    """Return all assets, optionally filtered by type."""
+    assets = _load_asset_library()
+    if type:
+        assets = [a for a in assets if a.get("type") == type]
+    return assets
+
+
+@app.post("/api/library/assets")
+async def create_library_asset(request: Request):
+    """Create a new asset. Auto-generates id / createdAt / updatedAt."""
+    body = await request.json()
+    now = datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+    new_asset = {
+        **body,
+        "id": f"asset_{uuid.uuid4().hex[:12]}",
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    assets = _load_asset_library()
+    assets.insert(0, new_asset)  # newest first
+    _save_asset_library(assets)
+    return new_asset
+
+
+@app.get("/api/library/assets/{asset_id}")
+async def get_library_asset(asset_id: str):
+    """Return a single asset by ID."""
+    assets = _load_asset_library()
+    for a in assets:
+        if a.get("id") == asset_id:
+            return a
+    raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+
+
+@app.put("/api/library/assets/{asset_id}")
+async def update_library_asset(asset_id: str, request: Request):
+    """Merge updates into an existing asset."""
+    body = await request.json()
+    assets = _load_asset_library()
+    for i, a in enumerate(assets):
+        if a.get("id") == asset_id:
+            assets[i] = {
+                **a,
+                **body,
+                "id": asset_id,  # prevent id override
+                "updatedAt": datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+            }
+            _save_asset_library(assets)
+            return assets[i]
+    raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+
+
+@app.delete("/api/library/assets/{asset_id}")
+async def delete_library_asset(asset_id: str):
+    """Delete a single asset by ID."""
+    assets = _load_asset_library()
+    filtered = [a for a in assets if a.get("id") != asset_id]
+    if len(filtered) == len(assets):
+        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+    _save_asset_library(filtered)
+    return {"status": "deleted", "id": asset_id}
+
+
 # --- 核心：防缓存中间件 ---
 @app.middleware("http")
 async def add_no_cache_header(request, call_next):

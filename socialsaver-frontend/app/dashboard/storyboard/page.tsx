@@ -401,7 +401,7 @@ export default function StoryboardAnalysisPage() {
     setEnvironmentLedger([])
   }
   
-  const handleSaveToLibrary = (name: string, tags: string[]) => {
+  const handleSaveToLibrary = async (name: string, tags: string[]) => {
     if (!analysisResult) return
 
     // Build source video URL (if job_id and sourceVideoFilename exist)
@@ -412,7 +412,7 @@ export default function StoryboardAnalysisPage() {
     // Get the first shot's firstFrameImage as thumbnail
     const thumbnail = analysisResult.storyboard[0]?.firstFrameImage || undefined
 
-    saveStoryboardToLibrary(
+    await saveStoryboardToLibrary(
       name,
       tags,
       {

@@ -39,9 +39,9 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
     setSaveDialogOpen(true)
   }
 
-  const handleSaveToLibrary = (name: string, tags: string[]) => {
+  const handleSaveToLibrary = async (name: string, tags: string[]) => {
     if (!selectedShot) return
-    saveShotToLibrary(name, tags, selectedShot)
+    await saveShotToLibrary(name, tags, selectedShot)
   }
 
   // Handle undefined or empty data

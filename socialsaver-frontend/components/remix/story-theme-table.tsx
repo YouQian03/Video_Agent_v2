@@ -16,8 +16,8 @@ interface StoryThemeTableProps {
 export function StoryThemeTable({ data, showSaveButton = true }: StoryThemeTableProps) {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
 
-  const handleSaveToLibrary = (name: string, tags: string[]) => {
-    saveThemeToLibrary(name, tags, data)
+  const handleSaveToLibrary = async (name: string, tags: string[]) => {
+    await saveThemeToLibrary(name, tags, data)
   }
 
   // Safe accessor to handle missing nested properties and N/A values

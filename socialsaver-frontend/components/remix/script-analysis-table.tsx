@@ -16,8 +16,8 @@ interface ScriptAnalysisTableProps {
 export function ScriptAnalysisTable({ data, showSaveButton = true }: ScriptAnalysisTableProps) {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
 
-  const handleSaveToLibrary = (name: string, tags: string[]) => {
-    saveScriptToLibrary(name, tags, data)
+  const handleSaveToLibrary = async (name: string, tags: string[]) => {
+    await saveScriptToLibrary(name, tags, data)
   }
 
   // Safe accessor to handle missing nested properties and N/A values

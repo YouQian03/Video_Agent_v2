@@ -14,7 +14,9 @@ import { StepIndicator } from "@/components/remix/step-indicator"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Sparkles, ArrowLeft, Video, Play, Download, Share2, Layers } from "lucide-react"
+import { Loader2, Sparkles, ArrowLeft, Video, Play, Download, Share2, Layers, FolderOpen } from "lucide-react"
+import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
+import { saveVideoToLibrary } from "@/lib/asset-storage"
 import { CharacterSceneViews } from "@/components/remix/character-scene-views"
 import type {
   AnalysisStep,
@@ -515,7 +517,8 @@ export default function RemixPage() {
     message: string
   }>({ stage: "idle", currentShot: 0, totalShots: 0, message: "" })
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null)
-  
+  const [saveVideoDialogOpen, setSaveVideoDialogOpen] = useState(false)
+
   // Redirect to batch mode if mode=batch
   useEffect(() => {
     if (searchParams.get("mode") === "batch") {
@@ -1660,7 +1663,37 @@ export default function RemixPage() {
                           <Share2 className="w-4 h-4 mr-2" />
                           Share
                         </Button>
+                        <Button
+                          variant="outline"
+                          className="flex-1 border-border text-foreground hover:bg-secondary bg-transparent"
+                          disabled={!generatedVideoUrl}
+                          onClick={() => setSaveVideoDialogOpen(true)}
+                        >
+                          <FolderOpen className="w-4 h-4 mr-2" />
+                          Save to Library
+                        </Button>
                       </div>
+
+                      <SaveToLibraryDialog
+                        open={saveVideoDialogOpen}
+                        onOpenChange={setSaveVideoDialogOpen}
+                        assetType="video"
+                        defaultName={`Remix Video - ${currentJobId || "Untitled"}`}
+                        onSave={async (name: string, tags: string[]) => {
+                          if (generatedVideoUrl) {
+                            await saveVideoToLibrary(
+                              name,
+                              tags,
+                              {
+                                url: generatedVideoUrl,
+                                duration: 60,
+                                format: "MP4 (H.264)",
+                                resolution: "1080x1920 (9:16)",
+                              }
+                            )
+                          }
+                        }}
+                      />
                     </div>
                   </CardContent>
                 </Card>
