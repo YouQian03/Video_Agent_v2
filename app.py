@@ -1301,6 +1301,7 @@ def generate_storyboard_frame(
             prompt_parts.append("2. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
             prompt_parts.append("3. SCENE: Apply scene context (setting, action, mood) from TARGET SCENE, but do NOT change character appearance away from the reference images.")
             prompt_parts.append("4. Generate a high-quality cinematic frame.")
+            prompt_parts.append("ABSOLUTE PROHIBITIONS: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
 
             final_prompt = " ".join(prompt_parts)
             print(f"   📝 Edit prompt: {final_prompt[:300]}...")

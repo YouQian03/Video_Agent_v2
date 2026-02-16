@@ -86,6 +86,7 @@ You MUST output a JSON object with the following structure. Each module contains
 - **Concrete Layer**: Use specific names (Jack), locations (Seattle), and details. Keep each value within **15-20 words** to fit the UI table.
 - **Abstract Layer**: Replace proper nouns with bracketed placeholders or archetypes (e.g., "[PROTAGONIST]", "A high-pressure metropolis").
 - **Detailed Bios**: This is the **only place** allowed to have long text (80-120 words). It must be ultra-descriptive to serve as a prompt anchor for asset generation.
+- **Watermark Handling**: Source video may have watermarks/logos overlaying characters. The `detailedCharacterBios` must describe the character's TRUE appearance, ignoring any watermark artifacts. If a logo covers part of a character's face, infer and describe the complete face based on other visible shots.
 - **Terminology**: Use professional screenwriting terms ("Inciting Incident", "Character Arc", "Three-Act Structure", etc.).
 
 ---

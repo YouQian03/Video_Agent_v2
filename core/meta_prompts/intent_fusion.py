@@ -64,6 +64,7 @@ These descriptions become the SOLE text source for Stage 4 asset generation. The
 - Visually exhaustive (no ambiguity)
 - Consistent across all shots
 - Style-appropriate (if LEGO style, describe LEGO-specific features)
+- Do NOT include watermark/logo artifacts as character features (e.g., do not describe a TikTok logo on someone's cheek as a "facial marking")
 
 ### Step 3: Executable Prompt Generation (可执行提示词生成)
 

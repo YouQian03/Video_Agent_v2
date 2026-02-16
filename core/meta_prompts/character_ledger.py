@@ -22,6 +22,7 @@ CHARACTER_EXTRACTION_PROMPT = """
 4. If a description is vague (e.g., "a person"), treat them as a new character unless context strongly suggests otherwise.
 5. Provide a detailed 'visualDescription' by aggregating all descriptive details from every shot they appear in.
 6. Count the characters; if you find a new person in a shot, you MUST add a new entry. Do not worry about length; accuracy is the priority. Even if there are 10+ characters, list them ALL.
+7. WATERMARK AWARENESS: Source frames may contain watermarks, logos, or social media UI. Do NOT treat these as character features. If a watermark covers a character's face/body, infer the occluded appearance from other shots. Never describe watermarks as tattoos, patterns, or accessories.
 
 # Constraints:
 - Output ONLY valid JSON.

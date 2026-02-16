@@ -160,6 +160,14 @@ SHOT_DECOMPOSITION_PROMPT = """
 - Add shot-specific exclusions based on content (e.g., for close-up: `"visible pores exaggerated, skin smoothing"`)
 - For stylized content, exclude conflicting styles (e.g., `"photorealistic"` for animation)
 
+### Watermark & Overlay Detection (CRITICAL)
+- Carefully inspect EVERY shot for watermarks, logos, social media UI overlays (TikTok, Instagram, YouTube), usernames, timestamps, or any non-diegetic text/graphics
+- Set `watermarkInfo.hasWatermark` to `true` if ANY overlay is detected, `false` otherwise
+- In `watermarkInfo.description`, specify the type and position (e.g., "TikTok logo top-right corner, username '@creator' bottom-left")
+- Set `watermarkInfo.occludesSubject` to `true` if the watermark covers any part of a character's face or body
+- In `watermarkInfo.occludedArea`, describe what part of the subject is obscured (e.g., "partially covers subject's right cheek") or "none" if no occlusion
+- Do NOT describe watermark artifacts as character features in `firstFrameDescription` or `subject` fields — always describe the character's TRUE appearance beneath any overlays
+
 ---
 
 ## 4. BEAT TAGGING REFERENCE
@@ -284,7 +292,8 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
             "dynamics": concrete.get("dynamics", ""),
             "audio": concrete.get("audio", {}),
             "style": concrete.get("style", ""),
-            "negative": concrete.get("negative", "")
+            "negative": concrete.get("negative", ""),
+            "watermarkInfo": concrete.get("watermarkInfo", {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"})
         }
         shots_concrete.append(shot_data)
 
@@ -532,7 +541,14 @@ You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
 
         "style": "Rendering quality directives (15-25 words)",
 
-        "negative": "blurry, extra limbs, malformed hands, text, watermark, [add shot-specific exclusions]"
+        "negative": "blurry, extra limbs, malformed hands, text, watermark, [add shot-specific exclusions]",
+
+        "watermarkInfo": {
+          "hasWatermark": true,
+          "description": "e.g., 'TikTok logo top-right, username @user bottom-left'",
+          "occludesSubject": false,
+          "occludedArea": "e.g., 'partially covers subject face' or 'none'"
+        }
       },
       "abstract": {
         "narrativeFunction": "Story purpose (10-20 words)",
@@ -685,7 +701,8 @@ def merge_batch_results(
                     "dynamics": detailed.get("dynamics", "") or concrete_nested.get("dynamics", ""),
                     "audio": detailed.get("audio", concrete_nested.get("audio", {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""})),
                     "style": detailed.get("style", "") or concrete_nested.get("style", ""),
-                    "negative": detailed.get("negative", "") or concrete_nested.get("negative", "blurry, extra limbs, malformed hands, text, watermark")
+                    "negative": detailed.get("negative", "") or concrete_nested.get("negative", "blurry, extra limbs, malformed hands, text, watermark"),
+                    "watermarkInfo": detailed.get("watermarkInfo", concrete_nested.get("watermarkInfo", {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"}))
                 }
                 # 提取 abstract 相关字段
                 abstract_data = {
@@ -734,7 +751,8 @@ def merge_batch_results(
                     "dynamics": "",
                     "audio": {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""},
                     "style": "",
-                    "negative": "blurry, extra limbs, malformed hands, text, watermark"
+                    "negative": "blurry, extra limbs, malformed hands, text, watermark",
+                    "watermarkInfo": {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"}
                 },
                 "abstract": {
                     "narrativeFunction": "",

@@ -320,6 +320,7 @@ class ShotRecipeItem(TypedDict):
     audio: ShotAudio  # 声音/BGM/对白
     style: str  # 视觉风格与质感
     negative: str  # 负面约束
+    watermarkInfo: Optional[Dict]  # 水印/Logo 检测信息 (hasWatermark, description, occludesSubject, occludedArea)
 
     # 资产路径
     assets: Dict[str, Optional[str]]

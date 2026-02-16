@@ -204,6 +204,9 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     )
     final_parts.append(f"[CONSISTENCY]: {semantic_bridge}")
 
+    # 7. Negative constraints - prevent watermark/logo reproduction
+    final_parts.append("[NEGATIVE CONSTRAINTS]: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
+
     return "\n\n".join(final_parts)
 
 
@@ -396,6 +399,7 @@ FORBIDDEN:
 - Changing shot scale, subject position, orientation, or gaze from source
 - Poster layouts, magazine compositions, or storyboard aesthetics
 - Any graphic design elements unless explicitly in style prompt
+- Any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics
 
 --ar 16:9"""
 
@@ -566,6 +570,8 @@ PHYSICS ENHANCEMENT:
 - Environmental interaction (wind effects, light particles)
 - Natural motion blur on moving elements
 - Atmospheric depth continuity
+
+PROHIBITIONS: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.
 
 CRITICAL: Cinematography parameters are LOCKED - preserve exactly as specified.
 high motion quality, cinematic, professional cinematography"""
@@ -777,6 +783,7 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
         print(f"🎤 [Seedance] Adding voiceover (English): {dialogue_text[:50]}...")
 
     prompt_parts.append(f"Style: {style}. Cinematic, high quality, smooth motion.")
+    prompt_parts.append("The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
     prompt = " ".join(prompt_parts)
 
     if len(prompt) > 2000:
