@@ -3,7 +3,7 @@
 import { useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card" // Card used for empty state
 import { Button } from "@/components/ui/button"
-import { FolderOpen } from "lucide-react"
+import { FolderOpen, Trash2 } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import { saveShotToLibrary } from "@/lib/asset-storage"
 import type { StoryboardShot } from "@/lib/types/remix"
@@ -15,9 +15,10 @@ interface StoryboardTableProps {
   data: StoryboardShot[]
   title?: string
   showSaveButtons?: boolean
+  onDeleteShot?: (shotNumber: number) => void
 }
 
-export function StoryboardTable({ data, title = "Storyboard Breakdown", showSaveButtons = true }: StoryboardTableProps) {
+export function StoryboardTable({ data, title = "Storyboard Breakdown", showSaveButtons = true, onDeleteShot }: StoryboardTableProps) {
   // Format time to avoid floating point precision issues
   const formatTime = (seconds: number): string => {
     if (seconds === undefined || seconds === null) return "-"
@@ -89,6 +90,7 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
               <col style={{width: "220px"}} />
               <col style={{width: "220px"}} />
               {showSaveButtons && <col style={{width: "60px"}} />}
+              {onDeleteShot && <col style={{width: "60px"}} />}
             </colgroup>
               <thead>
                 <tr className="border-b border-border bg-secondary/30">
@@ -106,6 +108,9 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                   <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">voiceover</th>
                   {showSaveButtons && (
                     <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">Save</th>
+                  )}
+                  {onDeleteShot && (
+                    <th className="text-muted-foreground text-left p-3 font-medium whitespace-nowrap">Delete</th>
                   )}
                 </tr>
               </thead>
@@ -198,6 +203,18 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                           className="h-8 px-2 text-accent hover:text-accent hover:bg-accent/10"
                         >
                           <FolderOpen className="w-4 h-4" />
+                        </Button>
+                      </td>
+                    )}
+                    {onDeleteShot && (
+                      <td className="p-3 align-top">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onDeleteShot(shot.shotNumber)}
+                          className="h-8 px-2 text-red-500 hover:text-red-600 hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </td>
                     )}

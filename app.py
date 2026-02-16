@@ -1103,36 +1103,32 @@ def generate_storyboard_frame(
     # 构建修改指令（而不是完整描述）
     modification_parts = []
 
-    # 1. 收集角色修改描述 + 三视图参考图片
+    # 1. 收集角色描述 + 三视图参考图片
+    # Description priority logic (per-entity):
+    #   (1) User uploaded image only       → use image, skip description
+    #   (2) User modified description only → use user description
+    #   (3) User uploaded image + modified → use both image and description
+    #   (4) User made no changes           → use AI remix description (fallback)
+    # Fields: "detailedDescription" = user-explicitly-set, "description" = AI-generated
     char_ids = applied_anchors.get("characters", [])
     char_descs = []
-    char_reference_images = []  # 存储角色参考图片的字节数据
+    char_reference_images = []
     if char_ids and identity_anchors.get("characters"):
         for char in identity_anchors["characters"]:
             if char.get("anchorId") in char_ids:
                 anchor_id = char.get("anchorId", "unknown")
-                desc = char.get("detailedDescription", "")
-                if desc:
-                    char_descs.append(f"[{anchor_id}]: {desc[:300]}")
-                    print(f"   🔗 [Anchor] Applied character: {anchor_id} -> {desc[:50]}...")
 
-                # 读取三视图参考图片
+                # Load three-view reference images first (to detect if user uploaded)
                 three_views = char.get("threeViews", {})
+                has_uploaded_image = False
                 for view_type in ["front", "side", "back"]:
                     view_path = three_views.get(view_type)
                     if view_path:
-                        # 路径可能是:
-                        # 1. 绝对路径: /Users/.../jobs/job_xxx/assets/...
-                        # 2. 相对路径: jobs/job_xxx/assets/... (相对于工作目录)
-                        # 3. 仅文件名: anchor_front.png (相对于 job_dir/assets)
                         if not os.path.isabs(view_path):
                             if view_path.startswith("jobs/"):
-                                # 已经是从工作目录开始的路径
                                 pass
                             elif "/" not in view_path:
-                                # 仅文件名，需要补全路径
                                 view_path = str(job_dir / "assets" / view_path)
-                            # 否则保持原样
                         if os.path.exists(view_path):
                             try:
                                 with open(view_path, "rb") as f:
@@ -1142,31 +1138,48 @@ def generate_storyboard_frame(
                                         "view": view_type,
                                         "bytes": img_bytes
                                     })
+                                    has_uploaded_image = True
                                     print(f"   🖼️ [Reference] Loaded character {anchor_id} {view_type} view from {view_path}")
                             except Exception as e:
                                 print(f"   ⚠️ Failed to load {view_path}: {e}")
                         else:
                             print(f"   ⚠️ Reference image not found: {view_path}")
 
-    # 2. 收集环境修改描述 + 三视图参考图片
+                # Determine which description to use
+                user_desc = char.get("detailedDescription")  # User-explicitly-set
+                ai_desc = char.get("description", "")        # AI remix-generated
+
+                if user_desc:
+                    # Scenario (2) or (3): user modified description → always use it
+                    desc = user_desc
+                elif has_uploaded_image:
+                    # Scenario (1): only uploaded image → skip description
+                    desc = ""
+                else:
+                    # Scenario (4): no changes → use AI remix description
+                    desc = ai_desc
+
+                if desc:
+                    char_descs.append(f"[{anchor_id}]: {desc[:300]}")
+                    print(f"   🔗 [Anchor] Applied character: {anchor_id} -> {desc[:50]}...")
+                elif has_uploaded_image:
+                    print(f"   🖼️ [Anchor] Character {anchor_id}: using uploaded image only (no description)")
+
+    # 2. 收集环境描述 + 三视图参考图片 (same priority logic as characters)
     env_ids = applied_anchors.get("environments", [])
     env_descs = []
-    env_reference_images = []  # 存储环境参考图片的字节数据
+    env_reference_images = []
     if env_ids and identity_anchors.get("environments"):
         for env in identity_anchors["environments"]:
             if env.get("anchorId") in env_ids:
                 anchor_id = env.get("anchorId", "unknown")
-                desc = env.get("detailedDescription", "")
-                if desc:
-                    env_descs.append(f"[{anchor_id}]: {desc[:300]}")
-                    print(f"   🔗 [Anchor] Applied environment: {anchor_id} -> {desc[:50]}...")
 
-                # 读取三视图参考图片
+                # Load three-view reference images first
                 three_views = env.get("threeViews", {})
+                has_uploaded_image = False
                 for view_type in ["wide", "detail", "alt"]:
                     view_path = three_views.get(view_type)
                     if view_path:
-                        # 路径处理逻辑同上
                         if not os.path.isabs(view_path):
                             if view_path.startswith("jobs/"):
                                 pass
@@ -1181,11 +1194,29 @@ def generate_storyboard_frame(
                                         "view": view_type,
                                         "bytes": img_bytes
                                     })
+                                    has_uploaded_image = True
                                     print(f"   🖼️ [Reference] Loaded environment {anchor_id} {view_type} view from {view_path}")
                             except Exception as e:
                                 print(f"   ⚠️ Failed to load {view_path}: {e}")
                         else:
                             print(f"   ⚠️ Reference image not found: {view_path}")
+
+                # Determine which description to use
+                user_desc = env.get("detailedDescription")
+                ai_desc = env.get("description", "")
+
+                if user_desc:
+                    desc = user_desc
+                elif has_uploaded_image:
+                    desc = ""
+                else:
+                    desc = ai_desc
+
+                if desc:
+                    env_descs.append(f"[{anchor_id}]: {desc[:300]}")
+                    print(f"   🔗 [Anchor] Applied environment: {anchor_id} -> {desc[:50]}...")
+                elif has_uploaded_image:
+                    print(f"   🖼️ [Anchor] Environment {anchor_id}: using uploaded image only (no description)")
 
     # 合并所有参考图片
     all_reference_images = char_reference_images + env_reference_images
@@ -2007,20 +2038,49 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
         # 1. 获取当前 remixedLayer
         remixed_layer = ir_manager.get_remixed_layer() or {}
 
-        # 2. 更新 shots 数据
+        # 2. 更新 shots 数据 — 与现有 Film IR 合并，保留 AI 生成的提示词
+        # 前端不携带 I2V_VideoGen / T2I_FirstFrame / appliedAnchors，
+        # 所以必须从已有的 remixed shots 中保留这些字段。
+        existing_shots_lookup = {}
+        for s in remixed_layer.get("shots", []):
+            existing_shots_lookup[s.get("shotId", "")] = s
+
         updated_shots = []
         for shot_data in request.storyboard:
             shot_id = shot_data.get("shotId", f"shot_{str(shot_data.get('shotNumber', 0)).zfill(2)}")
+            existing = existing_shots_lookup.get(shot_id, {})
+
+            # 保留 Film IR 中的 I2V_VideoGen（AI 生成的详细提示词）
+            # 仅当前端发送的值与 visualDescription 不同时才使用前端值
+            frontend_i2v = shot_data.get("i2vPrompt", "")
+            frontend_visual = shot_data.get("visualDescription", "")
+            existing_i2v = existing.get("I2V_VideoGen", "")
+
+            if frontend_i2v and frontend_i2v != frontend_visual:
+                i2v_value = frontend_i2v
+            elif existing_i2v:
+                i2v_value = existing_i2v
+            else:
+                i2v_value = frontend_visual
+
+            # 保留 Film IR 中的 appliedAnchors（前端发送空数组时）
+            frontend_anchors = shot_data.get("appliedAnchors", {"characters": [], "environments": []})
+            existing_anchors = existing.get("appliedAnchors", {"characters": [], "environments": []})
+            has_frontend_anchors = (
+                frontend_anchors.get("characters") or frontend_anchors.get("environments")
+            )
+            effective_anchors = frontend_anchors if has_frontend_anchors else existing_anchors
 
             # 构建更新后的 shot
             updated_shot = {
                 "shotId": shot_id,
                 "shotNumber": shot_data.get("shotNumber", 0),
-                "I2V_VideoGen": shot_data.get("i2vPrompt", "") or shot_data.get("visualDescription", ""),
-                "visualDescription": shot_data.get("visualDescription", ""),
+                "I2V_VideoGen": i2v_value,
+                "T2I_FirstFrame": existing.get("T2I_FirstFrame", ""),
+                "visualDescription": frontend_visual,
                 "contentDescription": shot_data.get("contentDescription", ""),
-                "action": shot_data.get("action", ""),
-                "motionDescription": shot_data.get("motionDescription", ""),
+                "action": shot_data.get("action", "") or existing.get("action", ""),
+                "motionDescription": shot_data.get("motionDescription", "") or existing.get("motionDescription", ""),
                 "startTime": shot_data.get("startSeconds", 0),
                 "endTime": shot_data.get("endSeconds", 0),
                 "durationSeconds": shot_data.get("durationSeconds", 3),
@@ -2029,11 +2089,11 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
                     "cameraAngle": shot_data.get("cameraAngle", "eye-level"),
                     "cameraMovement": shot_data.get("cameraMovement", "static"),
                 },
-                "appliedAnchors": shot_data.get("appliedAnchors", {"characters": [], "environments": []}),
+                "appliedAnchors": effective_anchors,
             }
             updated_shots.append(updated_shot)
 
-        # 3. 更新 remixedLayer
+        # 3. 更新 remixedLayer（保留 identityAnchors 等顶层字段）
         remixed_layer["shots"] = updated_shots
 
         # 4. 保存回 Film IR
@@ -2389,6 +2449,29 @@ def _save_entity_three_views(ir_manager: FilmIRManager, entity_id: str, entity_t
     return False
 
 
+def _save_entity_description(ir_manager: FilmIRManager, entity_id: str, entity_type: str, source: str, description: str):
+    """
+    Save auto-generated description to the entity's detailedDescription field.
+    """
+    if source == "anchor":
+        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"]
+        entity_list = identity_anchors.get("characters" if entity_type == "character" else "environments", [])
+        for entity in entity_list:
+            if entity.get("anchorId") == entity_id:
+                entity["detailedDescription"] = description
+                ir_manager.save()
+                return True
+    else:
+        narrative_template = ir_manager.ir["pillars"].get("II_narrativeTemplate", {})
+        entity_list = narrative_template.get("characterLedger" if entity_type == "character" else "environmentLedger", [])
+        for entity in entity_list:
+            if entity.get("entityId") == entity_id:
+                entity["detailedDescription"] = description
+                ir_manager.save()
+                return True
+    return False
+
+
 @app.get("/api/job/{job_id}/entity/{anchor_id}")
 async def get_entity_state(job_id: str, anchor_id: str):
     """
@@ -2540,6 +2623,62 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
         content = await file.read()
         f.write(content)
 
+    # Auto-generate description from uploaded image using Gemini vision
+    auto_description = None
+    try:
+        import os
+        from google import genai
+        from google.genai import types as genai_types
+        from PIL import Image
+        import io
+
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            api_key = api_key.strip()
+            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+            client = genai.Client(api_key=api_key)
+
+            img = Image.open(file_path)
+            img_bytes_io = io.BytesIO()
+            img.save(img_bytes_io, format="PNG")
+            img_bytes = img_bytes_io.getvalue()
+
+            is_character = view in ["front", "side", "back"]
+            if is_character:
+                vision_prompt = (
+                    "Describe this character/subject in detail for use as a visual reference. "
+                    "Focus on: species/type, color, texture, clothing, accessories, "
+                    "distinctive features, and overall appearance. "
+                    "Be specific and concise (2-3 sentences). "
+                    "Do NOT include background or scene description. "
+                    "Example: 'A black Labrador dog with a glossy short coat, brown eyes, "
+                    "and a red collar with a silver tag.'"
+                )
+            else:
+                vision_prompt = (
+                    "Describe this scene/environment in detail for use as a visual reference. "
+                    "Focus on: setting type, lighting, colors, atmosphere, key objects, "
+                    "and spatial layout. "
+                    "Be specific and concise (2-3 sentences). "
+                    "Example: 'A cozy coffee shop interior with warm amber lighting, "
+                    "exposed brick walls, and wooden tables.'"
+                )
+
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=[
+                    vision_prompt,
+                    genai_types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+                ],
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.3,
+                )
+            )
+            auto_description = response.text.strip()
+            print(f"   🔍 [Vision] Auto-generated description for {anchor_id}: {auto_description[:100]}...")
+    except Exception as e:
+        print(f"   ⚠️ [Vision] Failed to auto-generate description for {anchor_id}: {e}")
+
     # 更新 film_ir.json - 使用辅助函数查找实体
     ir_manager = FilmIRManager(job_id)
     entity, entity_type, source = _find_entity_by_id(ir_manager, anchor_id)
@@ -2554,12 +2693,55 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
     # 保存到正确的位置
     _save_entity_three_views(ir_manager, anchor_id, entity_type, source, three_views)
 
+    # Save auto-generated description to entity
+    if auto_description:
+        _save_entity_description(ir_manager, anchor_id, entity_type, source, auto_description)
+
+    # 如果来源是 ledger，同步到 identityAnchors（供 storyboard/video 生成使用）
+    if source == "ledger":
+        identity_anchors = ir_manager.ir["pillars"]["IV_renderStrategy"].get("identityAnchors", {
+            "characters": [], "environments": []
+        })
+        list_key = "characters" if entity_type == "character" else "environments"
+        if list_key not in identity_anchors:
+            identity_anchors[list_key] = []
+
+        existing_idx = next(
+            (i for i, a in enumerate(identity_anchors[list_key]) if a.get("anchorId") == anchor_id),
+            None
+        )
+
+        anchor_data = {
+            "anchorId": anchor_id,
+            "originalEntityId": anchor_id,
+            "name": entity.get("anchorName") or entity.get("name", ""),
+            "description": auto_description or entity.get("detailedDescription") or entity.get("description", ""),
+            "threeViews": three_views,
+            "status": "UPLOADED"
+        }
+
+        if existing_idx is not None:
+            # Preserve existing fields, only update threeViews and status
+            identity_anchors[list_key][existing_idx]["threeViews"] = three_views
+            identity_anchors[list_key][existing_idx]["status"] = "UPLOADED"
+            if auto_description:
+                identity_anchors[list_key][existing_idx]["detailedDescription"] = auto_description
+        else:
+            if auto_description:
+                anchor_data["detailedDescription"] = auto_description
+            identity_anchors[list_key].append(anchor_data)
+
+        ir_manager.ir["pillars"]["IV_renderStrategy"]["identityAnchors"] = identity_anchors
+        ir_manager.save()
+        print(f"   🔗 [Upload] Synced {anchor_id} threeViews to identityAnchors")
+
     return {
         "status": "success",
         "anchorId": anchor_id,
         "view": view,
         "filePath": str(file_path),
-        "url": _to_asset_url(job_id, str(file_path))
+        "url": _to_asset_url(job_id, str(file_path)),
+        "updatedDescription": auto_description
     }
 
 
@@ -2696,7 +2878,6 @@ def run_entity_generation_background(
 
         # 获取实体信息
         anchor_name = entity.get("name") or entity.get("anchorName", anchor_id)
-        detailed_description = entity.get("detailedDescription", "")
         style_adaptation = entity.get("styleAdaptation", "")
 
         results = {}
@@ -2710,6 +2891,22 @@ def run_entity_generation_background(
                 reference_path = existing_views["side"]
             elif existing_views.get("back"):
                 reference_path = existing_views["back"]
+
+            # Apply 4-scenario description logic:
+            # (1) User uploaded image only → skip description, use image
+            # (2) User modified description only → use user description
+            # (3) User uploaded + modified description → use both
+            # (4) No changes → use AI remix description
+            has_uploaded = reference_path is not None
+            user_desc = entity.get("detailedDescription")  # User-explicitly-set
+            ai_desc = entity.get("description", "")        # AI remix-generated
+
+            if user_desc:
+                detailed_description = user_desc
+            elif has_uploaded:
+                detailed_description = ""  # Let the image speak for itself
+            else:
+                detailed_description = ai_desc
 
             # 生成缺失的角色视图
             results = generator.generate_character_views_selective(
@@ -2731,6 +2928,17 @@ def run_entity_generation_background(
                 reference_path = existing_views["detail"]
             elif existing_views.get("alt"):
                 reference_path = existing_views["alt"]
+
+            has_uploaded = reference_path is not None
+            user_desc = entity.get("detailedDescription")
+            ai_desc = entity.get("description", "")
+
+            if user_desc:
+                detailed_description = user_desc
+            elif has_uploaded:
+                detailed_description = ""
+            else:
+                detailed_description = ai_desc
 
             atmospheric_conditions = entity.get("atmosphericConditions", "")
 

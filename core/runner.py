@@ -73,8 +73,13 @@ def get_remix_shot_data(job_dir: Path, shot_id: str, force_reload: bool = True) 
             print(f"⚠️ [Remix Data] Shot {shot_id} not found in remixedLayer")
             return None, None, None
 
-        # 获取 identity anchors
-        identity_anchors = remixed.get("identityAnchors", {})
+        # 获取 identity anchors - 优先从 pillars.IV_renderStrategy 读取
+        # （用户上传的图片和修改的描述保存在这里，而非 remixedLayer 的原始快照）
+        render_strategy = ir.get("pillars", {}).get("IV_renderStrategy", {})
+        identity_anchors = render_strategy.get("identityAnchors", {})
+        if not identity_anchors.get("characters") and not identity_anchors.get("environments"):
+            # Fallback to remixedLayer if pillars not yet populated
+            identity_anchors = remixed.get("identityAnchors", {})
 
         # 获取 visual style 配置
         render_strategy = ir.get("pillars", {}).get("IV_renderStrategy", {})
@@ -128,14 +133,17 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     # 构建 identity 描述
     identity_parts = []
 
-    # 添加角色锚点
+    # 添加角色锚点 (same 4-scenario logic as storyboard generation)
     characters = identity_anchors.get("characters", [])
     for char in characters:
         anchor_id = char.get("anchorId", "")
-        # 检查这个 shot 是否使用了这个角色
         applied_anchors = remixed_shot.get("appliedAnchors", {}).get("characters", [])
         if anchor_id in applied_anchors or not applied_anchors:
-            desc = char.get("detailedDescription", "")
+            three_views = char.get("threeViews", {})
+            has_uploaded = any(three_views.get(v) for v in ["front", "side", "back"])
+            user_desc = char.get("detailedDescription")
+            ai_desc = char.get("description", "")
+            desc = user_desc if user_desc else ("" if has_uploaded else ai_desc)
             if desc:
                 identity_parts.append(f"Character: {desc}")
 
@@ -145,7 +153,11 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
         anchor_id = env.get("anchorId", "")
         applied_anchors = remixed_shot.get("appliedAnchors", {}).get("environments", [])
         if anchor_id in applied_anchors or not applied_anchors:
-            desc = env.get("detailedDescription", "")
+            three_views = env.get("threeViews", {})
+            has_uploaded = any(three_views.get(v) for v in ["wide", "detail", "alt"])
+            user_desc = env.get("detailedDescription")
+            ai_desc = env.get("description", "")
+            desc = user_desc if user_desc else ("" if has_uploaded else ai_desc)
             if desc:
                 identity_parts.append(f"Environment: {desc}")
 

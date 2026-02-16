@@ -25,9 +25,10 @@ interface StoryboardChatProps {
   storyboard: StoryboardShot[]
   onUpdateStoryboard: (updatedShots: StoryboardShot[]) => void
   onConfirm: () => void
+  onDeleteShot?: (shotNumber: number) => void
 }
 
-export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfirm }: StoryboardChatProps) {
+export function StoryboardChat({ jobId, storyboard, onUpdateStoryboard, onConfirm, onDeleteShot }: StoryboardChatProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",

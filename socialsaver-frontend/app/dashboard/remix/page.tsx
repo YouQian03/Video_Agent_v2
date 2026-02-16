@@ -949,6 +949,14 @@ export default function RemixPage() {
     setDisplayStep("script")
   }
 
+  const handleDeleteShot = (shotNumber: number) => {
+    if (!finalStoryboard) return
+    const updated = finalStoryboard
+      .filter((shot) => shot.shotNumber !== shotNumber)
+      .map((shot, idx) => ({ ...shot, shotNumber: idx + 1 }))
+    setFinalStoryboard(updated)
+  }
+
   const handleUpdateStoryboard = (updatedShots: StoryboardShot[]) => {
     setFinalStoryboard(updatedShots)
   }
@@ -1469,7 +1477,7 @@ export default function RemixPage() {
                   </CardContent>
                 </Card>
                 
-                <StoryboardTable data={finalStoryboard} title="Remix Storyboard" />
+                <StoryboardTable data={finalStoryboard} title="Remix Storyboard" onDeleteShot={handleDeleteShot} />
                 
                 <StoryboardChat
                   jobId={currentJobId || ""}

@@ -152,7 +152,9 @@ class AssetGenerator:
             if vs_parts:
                 visual_style_str = "\n".join(vs_parts) + "\n"
 
-        prompt = f"""Cinematic character reference image, {view_instructions[view]}.
+        if detailed_description:
+            # Has text description: use it in the prompt
+            prompt = f"""Cinematic character reference image, {view_instructions[view]}.
 
 Subject: {anchor_name}
 {detailed_description}
@@ -168,6 +170,24 @@ Technical requirements:
 - Consistent character appearance across all views
 - 16:9 widescreen composition
 - If multiple characters are described, show all of them in the scene
+"""
+        else:
+            # No text description: rely entirely on the reference image
+            prompt = f"""Cinematic character reference image, {view_instructions[view]}.
+
+CRITICAL: Generate the EXACT SAME character/subject as shown in the provided reference image.
+Match every visual detail: colors, textures, proportions, clothing, features, and overall appearance.
+Do NOT change the character's appearance in any way.
+
+{attributes_str}{style_str}
+{visual_style_str}
+Technical requirements:
+- The character must look IDENTICAL to the reference image
+- Only change the viewing angle as specified above
+- Professional cinematic lighting
+- High detail, sharp focus
+- No text, no watermarks, no logos
+- 16:9 widescreen composition
 """
         return prompt.strip()
 
@@ -361,6 +381,10 @@ Technical requirements:
     ) -> Tuple[Optional[Image.Image], Optional[str]]:
         """
         同步版本的图片生成
+
+        When reference images are provided, uses TEXT+IMAGE mode (image editing)
+        so Gemini actually references the input images.
+        Without reference images, uses IMAGE-only mode (text-to-image).
         """
         try:
             # 构建 contents
@@ -369,10 +393,16 @@ Technical requirements:
                 for ref_img in reference_images:
                     contents.append(ref_img)
 
-            # 配置生成参数
-            config = self.types.GenerateContentConfig(
-                response_modalities=['IMAGE'],
-            )
+            # 有参考图时用 TEXT+IMAGE 模式（图片编辑），Gemini 才会真正参考输入图片
+            # 无参考图时用纯 IMAGE 模式（文生图）
+            if reference_images:
+                config = self.types.GenerateContentConfig(
+                    response_modalities=['TEXT', 'IMAGE'],
+                )
+            else:
+                config = self.types.GenerateContentConfig(
+                    response_modalities=['IMAGE'],
+                )
 
             # 调用 API
             response = self.client.models.generate_content(
@@ -569,9 +599,10 @@ Technical requirements:
             "back": AssetType.CHARACTER_BACK
         }
 
-        # 按顺序生成（front -> side -> back）
+        # 按顺序生成（front -> side -> back），每一步把已生成的视图作为后续参考
         ordered_views = ["front", "side", "back"]
         front_image = existing_images.get("front")
+        generated_views = {}  # Track all successfully generated views for chaining
 
         for view_name in ordered_views:
             if view_name not in views_to_generate:
@@ -595,10 +626,15 @@ Technical requirements:
                 visual_style=visual_style
             )
 
-            # 准备参考图片
+            # 准备参考图片：user reference + front image + all previously generated views
             refs = reference_images.copy()
             if front_image and view != AssetType.CHARACTER_FRONT:
                 refs.append(front_image)
+            for prev_view_name, prev_image in generated_views.items():
+                if prev_image not in refs:
+                    refs.append(prev_image)
+
+            print(f"   📸 Passing {len(refs)} reference images for {view_name}")
 
             # 生成图片
             image, error = self._generate_image_sync(prompt, refs)
@@ -608,9 +644,10 @@ Technical requirements:
                 file_path = self.assets_dir / file_name
                 image.save(file_path, "PNG")
 
-                # 保存正面图供后续参考
+                # 保存生成的视图供后续参考
                 if view == AssetType.CHARACTER_FRONT:
                     front_image = image
+                generated_views[view_name] = image
 
                 results[view_name] = GeneratedAsset(
                     anchor_id=anchor_id,

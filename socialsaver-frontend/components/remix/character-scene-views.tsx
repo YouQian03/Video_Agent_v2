@@ -1115,7 +1115,13 @@ function CharacterCard({
         side: 'sideView',
         back: 'backView'
       }
-      onUpdate({ [viewMap[view]]: result.url })
+      const updates: Partial<CharacterView> = { [viewMap[view]]: result.url }
+      // Auto-update description to match the uploaded image
+      if (result.updatedDescription) {
+        updates.description = result.updatedDescription
+        setLocalDescription(result.updatedDescription)
+      }
+      onUpdate(updates)
     } catch (error) {
       console.error("Upload failed:", error)
     } finally {
@@ -1348,7 +1354,13 @@ function SceneCard({
         detail: 'detailView',
         alt: 'alternateAngle'
       }
-      onUpdate({ [viewMap[view]]: result.url })
+      const updates: Partial<SceneView> = { [viewMap[view]]: result.url }
+      // Auto-update description to match the uploaded image
+      if (result.updatedDescription) {
+        updates.description = result.updatedDescription
+        setLocalDescription(result.updatedDescription)
+      }
+      onUpdate(updates)
     } catch (error) {
       console.error("Upload failed:", error)
     } finally {

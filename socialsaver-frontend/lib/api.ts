@@ -2,7 +2,7 @@
 // SocialSaver frontend API configuration and call functions
 
 // Backend API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://g3videoagent-production.up.railway.app";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ============================================================
 // Type Definitions
@@ -949,7 +949,7 @@ export async function uploadEntityView(
   anchorId: string,
   view: string,
   file: File
-): Promise<{ status: string; anchorId: string; view: string; filePath: string; url: string }> {
+): Promise<{ status: string; anchorId: string; view: string; filePath: string; url: string; updatedDescription?: string }> {
   const formData = new FormData();
   formData.append("file", file);
 
