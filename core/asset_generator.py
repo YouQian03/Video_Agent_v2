@@ -112,7 +112,8 @@ class AssetGenerator:
         anchor_name: str,
         style_adaptation: str = "",
         persistent_attributes: List[str] = None,
-        visual_style: Dict[str, str] = None
+        visual_style: Dict[str, str] = None,
+        has_reference: bool = False
     ) -> str:
         """
         构建角色视图 prompt
@@ -124,6 +125,7 @@ class AssetGenerator:
             style_adaptation: 风格适配说明
             persistent_attributes: 持久属性列表
             visual_style: Visual Style 配置 (artStyle, colorPalette, lightingMood, cameraStyle)
+            has_reference: 是否有用户上传的参考图片
         """
         view_instructions = {
             AssetType.CHARACTER_FRONT: "front facing view, looking directly at camera",
@@ -152,8 +154,30 @@ class AssetGenerator:
             if vs_parts:
                 visual_style_str = "\n".join(vs_parts) + "\n"
 
-        if detailed_description:
-            # Has text description: use it in the prompt
+        if has_reference and detailed_description:
+            # Has reference image + text description: prioritize the reference image
+            prompt = f"""Cinematic character reference image, {view_instructions[view]}.
+
+Subject: {anchor_name}
+The attached reference image shows the EXACT target character. Generate this character from the specified view angle.
+Use the following description only as supplementary context; if there is any conflict between the reference image and the text, the reference image takes priority.
+Description: {detailed_description}
+
+{attributes_str}{style_str}
+{visual_style_str}
+Technical requirements:
+- ONLY draw the single character shown in the reference image
+- Do NOT add any other characters even if mentioned in the description
+- Match the reference image character's appearance exactly (color, shape, features, clothing)
+- Maintain the pose, action, and setting described (e.g., sitting in car, standing in room)
+- Professional cinematic lighting
+- High detail, sharp focus
+- No text, no watermarks, no logos
+- Consistent character appearance across all views
+- 16:9 widescreen composition
+"""
+        elif detailed_description:
+            # Has text description only (no reference image): use original logic
             prompt = f"""Cinematic character reference image, {view_instructions[view]}.
 
 Subject: {anchor_name}
@@ -484,7 +508,8 @@ Technical requirements:
                 detailed_description=detailed_description,
                 anchor_name=anchor_name,
                 style_adaptation=style_adaptation,
-                persistent_attributes=persistent_attributes
+                persistent_attributes=persistent_attributes,
+                has_reference=bool(reference_images)
             )
 
             # 准备参考图片
@@ -623,7 +648,8 @@ Technical requirements:
                 anchor_name=anchor_name,
                 style_adaptation=style_adaptation,
                 persistent_attributes=persistent_attributes,
-                visual_style=visual_style
+                visual_style=visual_style,
+                has_reference=bool(reference_images)
             )
 
             # 准备参考图片：user reference + front image + all previously generated views
