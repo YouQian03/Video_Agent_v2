@@ -1269,10 +1269,10 @@ def generate_storyboard_frame(
                 env_refs = [r for r in all_reference_images if 'env' in r['anchor_id'].lower()]
 
                 if char_refs:
-                    prompt_parts.append(f"CHARACTER REFERENCES: I have provided {len(char_refs)} character reference images:")
+                    prompt_parts.append(f"CRITICAL - CHARACTER REFERENCES (HIGHEST PRIORITY): I have provided {len(char_refs)} character reference images:")
                     for ref in char_refs:
                         prompt_parts.append(f"  - {ref['anchor_id']} ({ref['view']} view)")
-                    prompt_parts.append("Match character appearances to these references.")
+                    prompt_parts.append("The character's face, hair, clothing, and accessories MUST match these reference images EXACTLY. If the TARGET SCENE description conflicts with the reference images (e.g., different clothing or accessories), ALWAYS follow the reference images instead.")
 
                 if env_refs:
                     prompt_parts.append(f"ENVIRONMENT REFERENCES: I have provided {len(env_refs)} environment reference images:")
@@ -1296,10 +1296,11 @@ def generate_storyboard_frame(
                 prompt_parts.append(f"VISUAL STYLE: {', '.join(style_parts)}")
 
             # 编辑规则
-            prompt_parts.append("EDITING RULES:")
-            prompt_parts.append("1. Preserve the camera angle, framing, and overall composition from the reference image.")
-            prompt_parts.append("2. Apply the described changes (colors, objects, characters, etc.) as specified in TARGET SCENE.")
-            prompt_parts.append("3. Generate a high-quality cinematic frame with the requested modifications.")
+            prompt_parts.append("EDITING RULES (in priority order):")
+            prompt_parts.append("1. CHARACTER APPEARANCE: If character reference images are provided, the character's appearance (face, hair, clothing, accessories) MUST match the reference images. This overrides any conflicting descriptions in TARGET SCENE.")
+            prompt_parts.append("2. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
+            prompt_parts.append("3. SCENE: Apply scene context (setting, action, mood) from TARGET SCENE, but do NOT change character appearance away from the reference images.")
+            prompt_parts.append("4. Generate a high-quality cinematic frame.")
 
             final_prompt = " ".join(prompt_parts)
             print(f"   📝 Edit prompt: {final_prompt[:300]}...")
