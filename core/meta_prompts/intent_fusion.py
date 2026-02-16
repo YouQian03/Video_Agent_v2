@@ -66,6 +66,9 @@ These descriptions become the SOLE text source for Stage 4 asset generation. The
 - Style-appropriate (if LEGO style, describe LEGO-specific features)
 - Do NOT include watermark/logo artifacts as character features (e.g., do not describe a TikTok logo on someone's cheek as a "facial marking")
 
+**⚠️ CRITICAL — Clothing/Props Inheritance Rule:**
+When `persistentAttributes` contains clothing, accessories, or interactive props inherited from the original character, the Identity Anchor description MUST incorporate ALL of them. Do NOT invent new clothing or props — use the ones from `persistentAttributes`. The new subject's identity (face, body type, species) changes, but their outfit, belongings, and nearby objects stay the same unless the user explicitly requested otherwise.
+
 ### Step 3: Executable Prompt Generation (可执行提示词生成)
 
 For EACH shot, generate TWO distinct prompts:

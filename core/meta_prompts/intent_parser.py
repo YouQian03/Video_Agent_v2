@@ -74,6 +74,17 @@ Identify ALL subject replacement requests:
 - **Attribute Inheritance**: Extract persistent visual attributes (e.g., "红色披风", "金属外壳")
 - **Reference Image Binding**: If user provides a reference image for a character, bind the image path
 
+**⚠️ CRITICAL — Automatic Clothing/Props Inheritance for Subject Swaps:**
+When the user ONLY requests a subject identity change (e.g., "man → woman", "cat → dog", "person → robot") WITHOUT explicitly mentioning new clothing or props, you MUST:
+1. Extract the original character's clothing, accessories, held objects, and nearby interactive props (e.g., bicycle being ridden, phone being held, bag being carried) from the Character Ledger's `visualSignature` and `detailedDescription`
+2. Populate `persistentAttributes` with ALL of these items (e.g., ["blue denim jacket", "black backpack", "riding a red bicycle", "holding a coffee cup"])
+3. In `detailedDescription`, describe the NEW subject wearing/using the SAME clothing and interacting with the SAME props
+4. Only omit original attributes when: (a) the user explicitly requests different clothing/props, OR (b) the attribute is physically incompatible with the new subject (e.g., a dog cannot wear human glasses — but CAN wear a collar that replaces them)
+
+Example: User says "把男人换成女人" and original character wears "blue jacket, jeans, riding a bicycle" →
+- `persistentAttributes`: ["blue jacket", "jeans", "riding a bicycle"]
+- `detailedDescription`: "A woman in her mid-20s wearing a blue jacket and jeans, riding a bicycle..."
+
 **CRITICAL - Entity ID Binding**:
 - You MUST use the Entity Matching Protocol above to find the `originalEntityId` from Character Ledger
 - ⚠️ REPLACEMENT vs NEW ENTITY:

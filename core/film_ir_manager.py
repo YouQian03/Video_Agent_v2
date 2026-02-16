@@ -1860,6 +1860,9 @@ The `detailedDescription` field in the remixed entities below has been carefully
 4. For new entities (new_char_XX, new_env_XX), use those IDs as anchorIds
 5. Include which shotIds this anchor applies to (from affectedShots)
 
+## ⚠️ CRITICAL — Clothing/Props Inheritance:
+When a character has `persistentAttributes` (e.g., clothing, accessories, held objects, vehicles), the `detailedDescription` MUST include ALL of these items on the NEW subject. The subject's identity (face, body, species) changes but their outfit, belongings, and interactive props remain the same. Do NOT invent new clothing or accessories — faithfully transfer what is listed in `persistentAttributes`. Also reference the ORIGINAL character's description from the Ledger to capture any clothing/props not explicitly listed in persistentAttributes.
+
 ## Output Format (Strict JSON):
 {{
   "characters": [
