@@ -134,10 +134,14 @@ from core.meta_prompts import (
     extract_shot_dialogue_timeline,
     create_shot_boundaries_text,
     merge_batch_results,
-    # Character Ledger (Pillar II extension) - Split prompts for better extraction
-    CHARACTER_EXTRACTION_PROMPT,
+    # Character Ledger (Pillar II extension) - 3-pass architecture
+    CHARACTER_DISCOVERY_PROMPT,
+    CHARACTER_PRESENCE_AUDIT_PROMPT,
+    SURGICAL_RECHECK_PROMPT,
     ENVIRONMENT_EXTRACTION_PROMPT,
     build_shot_subjects_input,
+    select_key_frames,
+    check_character_continuity,
     process_ledger_result,
     get_ledger_display_summary,
     update_shots_with_entity_refs,
@@ -928,11 +932,13 @@ class FilmIRManager:
         client
     ) -> Optional[Dict[str, Any]]:
         """
-        分离式角色/环境识别：使用两个独立的专用提示词
+        三阶段角色/环境识别架构 (3-Pass Character Extraction)
 
-        Step 1: 调用 CHARACTER_EXTRACTION_PROMPT 提取所有角色
-        Step 2: 调用 ENVIRONMENT_EXTRACTION_PROMPT 提取所有环境
-        Step 3: 合并结果
+        Pass 1 (Discovery): 2-3 张宽景关键帧 → 确定演员表 (who exists)
+        Pass 2 (Presence Audit): 逐角色分批帧审计 → 确定出场表 (where they appear)
+        Pass 3 (Continuity Check): 确定性间隙填充 + 外科式单图重检
+
+        独立步骤: 环境提取 (text-only, unchanged)
 
         Args:
             shots: Pillar III 的 concrete shots 列表
@@ -941,56 +947,204 @@ class FilmIRManager:
         Returns:
             处理后的 character ledger 数据
         """
-        # 构建 shot subjects 输入
         print(f"📊 [Character Ledger] Input: {len(shots)} shots to analyze")
         shot_subjects_text = build_shot_subjects_input(shots)
-        print(f"📝 [Character Ledger] Shot subjects text length: {len(shot_subjects_text)} chars")
-
-        # 🔍 DEBUG: Print first and last shot to verify all shots are included
-        if shots:
-            print(f"   First shot: {shots[0].get('shotId')} - {shots[0].get('subject', 'N/A')[:50]}...")
-            if len(shots) > 1:
-                print(f"   Last shot: {shots[-1].get('shotId')} - {shots[-1].get('subject', 'N/A')[:50]}...")
-
         all_shot_ids = [shot.get("shotId") for shot in shots if shot.get("shotId")]
+        job_dir = Path("jobs") / self.job_id
+        frames_dir = job_dir / "frames"
+
+        # Helper: load frame bytes for a shot
+        def load_frame(shot_id: str) -> bytes:
+            frame_path = frames_dir / f"{shot_id}.png"
+            if frame_path.exists():
+                with open(frame_path, "rb") as f:
+                    return f.read()
+            return None
 
         # ============================================================
-        # Step 1: 角色提取 (Character Extraction)
+        # Pass 1: Character Discovery — 2-3 key frames
         # ============================================================
-        char_prompt = CHARACTER_EXTRACTION_PROMPT.replace("{shot_subjects}", shot_subjects_text)
-        print(f"🎭 [Step 1] Extracting characters...", flush=True)
+        key_frame_shots = select_key_frames(shots)
+        key_frame_ids = [s.get("shotId") for s in key_frame_shots]
+        print(f"🎭 [Pass 1: Discovery] Selected {len(key_frame_shots)} key frames: {key_frame_ids}", flush=True)
 
-        char_response = gemini_call_with_retry(
+        discovery_prompt = CHARACTER_DISCOVERY_PROMPT.replace("{shot_subjects}", shot_subjects_text)
+        discovery_contents = [discovery_prompt]
+
+        # Attach only key frame images
+        for shot in key_frame_shots:
+            shot_id = shot.get("shotId", "")
+            frame_bytes = load_frame(shot_id)
+            if frame_bytes:
+                discovery_contents.append(f"[KEY FRAME — {shot_id}]:")
+                discovery_contents.append(types.Part.from_bytes(data=frame_bytes, mime_type="image/png"))
+
+        discovery_response = gemini_call_with_retry(
             client=client,
             model="gemini-3-flash-preview",
-            contents=[char_prompt],
+            contents=discovery_contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.1  # Low temperature for deterministic extraction
+                temperature=0.1
             )
         )
 
         try:
-            char_result = json.loads(char_response.text)
-            raw_chars = char_result.get("characters", [])
-            print(f"   ✅ Found {len(raw_chars)} characters")
-
-            # Log which shots are covered by characters
-            char_shots = set()
-            for c in raw_chars:
-                char_shots.update(c.get("appearsInShots", []))
-            print(f"   📊 Characters cover {len(char_shots)}/{len(all_shot_ids)} shots")
-
+            discovery_result = json.loads(discovery_response.text)
+            discovered_chars = discovery_result.get("characters", [])
+            print(f"   ✅ Discovered {len(discovered_chars)} characters:")
+            for c in discovered_chars:
+                print(f"      - {c.get('entityId', '?')}: {c.get('displayName', '?')} [{c.get('importance', '?')}]")
         except json.JSONDecodeError as e:
-            print(f"   ❌ Failed to parse characters JSON: {e}")
-            print(f"   Raw response: {char_response.text[:300]}...")
-            raw_chars = []
+            print(f"   ❌ Failed to parse Discovery JSON: {e}")
+            print(f"   Raw response: {discovery_response.text[:300]}...")
+            discovered_chars = []
 
         # ============================================================
-        # Step 2: 环境提取 (Environment Extraction)
+        # Pass 2: Presence Audit — per PRIMARY character, batched frames
+        # SECONDARY characters get a single-pass audit with all frames
+        # ============================================================
+        AUDIT_BATCH_SIZE = 6
+
+        primary_chars = [c for c in discovered_chars if c.get("importance") == "PRIMARY"]
+        secondary_chars = [c for c in discovered_chars if c.get("importance") != "PRIMARY"]
+
+        print(f"🔍 [Pass 2: Presence Audit] Auditing {len(primary_chars)} PRIMARY characters (batched)...", flush=True)
+
+        # Build character ledger entries
+        character_ledger = []
+
+        for char in primary_chars:
+            char_name = char.get("displayName", "Unknown")
+            char_desc = char.get("visualDescription", "")
+            entity_id = char.get("entityId", f"orig_char_{len(character_ledger) + 1:02d}")
+
+            print(f"   🎯 Auditing '{char_name}' ({entity_id})...", flush=True)
+
+            appears_in = []
+
+            # Split shots into batches
+            for batch_start in range(0, len(shots), AUDIT_BATCH_SIZE):
+                batch_shots = shots[batch_start:batch_start + AUDIT_BATCH_SIZE]
+                batch_ids = [s.get("shotId", "") for s in batch_shots]
+
+                audit_prompt = CHARACTER_PRESENCE_AUDIT_PROMPT.replace(
+                    "{char_name}", char_name
+                ).replace(
+                    "{char_description}", char_desc
+                )
+
+                audit_contents = [audit_prompt]
+
+                # Attach batch frame images
+                for shot in batch_shots:
+                    shot_id = shot.get("shotId", "")
+                    frame_bytes = load_frame(shot_id)
+                    if frame_bytes:
+                        audit_contents.append(f"[{shot_id}]:")
+                        audit_contents.append(types.Part.from_bytes(data=frame_bytes, mime_type="image/png"))
+
+                audit_response = gemini_call_with_retry(
+                    client=client,
+                    model="gemini-3-flash-preview",
+                    contents=audit_contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+
+                try:
+                    audit_result = json.loads(audit_response.text)
+                    audit_entries = audit_result.get("audit", [])
+                    for entry in audit_entries:
+                        if entry.get("visible", False):
+                            appears_in.append(entry.get("shotId", ""))
+                except json.JSONDecodeError as e:
+                    print(f"      ⚠️ Failed to parse audit batch JSON: {e}")
+                    # Fallback: assume visible in all batch shots
+                    appears_in.extend(batch_ids)
+
+            # Filter to valid shot IDs only
+            appears_in = [sid for sid in appears_in if sid in all_shot_ids]
+            print(f"      ✅ '{char_name}' visible in {len(appears_in)}/{len(all_shot_ids)} shots: {appears_in}")
+
+            character_ledger.append({
+                "entityId": entity_id,
+                "entityType": "CHARACTER",
+                "importance": "PRIMARY",
+                "displayName": char_name,
+                "visualSignature": char_desc[:100],
+                "detailedDescription": char_desc,
+                "appearsInShots": appears_in,
+                "shotCount": len(appears_in),
+                "trackingConfidence": "HIGH",
+                "visualCues": []
+            })
+
+        # SECONDARY characters: single-pass audit (all frames at once, no batching)
+        if secondary_chars:
+            print(f"   📋 Auditing {len(secondary_chars)} SECONDARY characters (single-pass)...", flush=True)
+
+            for char in secondary_chars:
+                char_name = char.get("displayName", "Unknown")
+                char_desc = char.get("visualDescription", "")
+                entity_id = char.get("entityId", f"orig_char_{len(character_ledger) + 1:02d}")
+
+                audit_prompt = CHARACTER_PRESENCE_AUDIT_PROMPT.replace(
+                    "{char_name}", char_name
+                ).replace(
+                    "{char_description}", char_desc
+                )
+
+                audit_contents = [audit_prompt]
+                for shot in shots:
+                    shot_id = shot.get("shotId", "")
+                    frame_bytes = load_frame(shot_id)
+                    if frame_bytes:
+                        audit_contents.append(f"[{shot_id}]:")
+                        audit_contents.append(types.Part.from_bytes(data=frame_bytes, mime_type="image/png"))
+
+                audit_response = gemini_call_with_retry(
+                    client=client,
+                    model="gemini-3-flash-preview",
+                    contents=audit_contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+
+                appears_in = []
+                try:
+                    audit_result = json.loads(audit_response.text)
+                    for entry in audit_result.get("audit", []):
+                        if entry.get("visible", False):
+                            appears_in.append(entry.get("shotId", ""))
+                except json.JSONDecodeError:
+                    pass
+
+                appears_in = [sid for sid in appears_in if sid in all_shot_ids]
+                print(f"      ✅ '{char_name}' visible in {len(appears_in)}/{len(all_shot_ids)} shots")
+
+                character_ledger.append({
+                    "entityId": entity_id,
+                    "entityType": "CHARACTER",
+                    "importance": char.get("importance", "SECONDARY"),
+                    "displayName": char_name,
+                    "visualSignature": char_desc[:100],
+                    "detailedDescription": char_desc,
+                    "appearsInShots": appears_in,
+                    "shotCount": len(appears_in),
+                    "trackingConfidence": "MEDIUM",
+                    "visualCues": []
+                })
+
+        # ============================================================
+        # Environment Extraction (text-only, unchanged)
         # ============================================================
         env_prompt = ENVIRONMENT_EXTRACTION_PROMPT.replace("{shot_subjects}", shot_subjects_text)
-        print(f"🏠 [Step 2] Extracting environments...")
+        print(f"🏠 [Environment] Extracting environments...")
 
         env_response = gemini_call_with_retry(
             client=client,
@@ -998,64 +1152,95 @@ class FilmIRManager:
             contents=[env_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.1  # Low temperature for deterministic extraction
+                temperature=0.1
             )
         )
 
+        environment_ledger = []
         try:
             env_result = json.loads(env_response.text)
             raw_envs = env_result.get("environments", [])
             print(f"   ✅ Found {len(raw_envs)} environments")
 
-            # Log which shots are covered by environments
-            env_shots = set()
-            for e in raw_envs:
-                env_shots.update(e.get("appearsInShots", []))
-            print(f"   📊 Environments cover {len(env_shots)}/{len(all_shot_ids)} shots")
-
-            # Check for missing shots
-            missing = set(all_shot_ids) - env_shots
-            if missing:
-                print(f"   ⚠️ Missing shots: {sorted(missing)}")
-
+            for i, env in enumerate(raw_envs):
+                environment_ledger.append({
+                    "entityId": env.get("entityId", f"orig_env_{i+1:02d}"),
+                    "entityType": "ENVIRONMENT",
+                    "importance": env.get("importance", "SECONDARY"),
+                    "displayName": env.get("displayName", "Unknown"),
+                    "visualSignature": env.get("visualDescription", "")[:100],
+                    "detailedDescription": env.get("visualDescription", ""),
+                    "appearsInShots": env.get("appearsInShots", []),
+                    "shotCount": len(env.get("appearsInShots", []))
+                })
         except json.JSONDecodeError as e:
             print(f"   ❌ Failed to parse environments JSON: {e}")
-            print(f"   Raw response: {env_response.text[:300]}...")
             raw_envs = []
 
         # ============================================================
-        # Step 3: 合并结果并转换格式
+        # Pass 3: Continuity Check — deterministic gap-fill + surgical re-check
         # ============================================================
-        # Convert to legacy format for compatibility
-        character_ledger = []
-        for i, char in enumerate(raw_chars):
-            character_ledger.append({
-                "entityId": char.get("entityId", f"orig_char_{i+1:02d}"),
-                "entityType": "CHARACTER",
-                "importance": char.get("importance", "SECONDARY"),
-                "displayName": char.get("displayName", "Unknown"),
-                "visualSignature": char.get("visualDescription", "")[:100],
-                "detailedDescription": char.get("visualDescription", ""),
-                "appearsInShots": char.get("appearsInShots", []),
-                "shotCount": len(char.get("appearsInShots", [])),
-                "trackingConfidence": "HIGH",
-                "visualCues": []
-            })
+        print(f"🔗 [Pass 3: Continuity] Checking character continuity...", flush=True)
 
-        environment_ledger = []
-        for i, env in enumerate(raw_envs):
-            environment_ledger.append({
-                "entityId": env.get("entityId", f"orig_env_{i+1:02d}"),
-                "entityType": "ENVIRONMENT",
-                "importance": env.get("importance", "SECONDARY"),
-                "displayName": env.get("displayName", "Unknown"),
-                "visualSignature": env.get("visualDescription", "")[:100],
-                "detailedDescription": env.get("visualDescription", ""),
-                "appearsInShots": env.get("appearsInShots", []),
-                "shotCount": len(env.get("appearsInShots", []))
-            })
+        character_ledger, recheck_requests = check_character_continuity(
+            character_ledger, environment_ledger, all_shot_ids
+        )
 
-        # Build combined result
+        # Execute surgical re-checks for 2-3 shot gaps
+        if recheck_requests:
+            print(f"   🔬 Executing {len(recheck_requests)} surgical re-checks...", flush=True)
+
+            for req in recheck_requests:
+                shot_id = req["shotId"]
+                frame_bytes = load_frame(shot_id)
+                if not frame_bytes:
+                    continue
+
+                recheck_prompt = SURGICAL_RECHECK_PROMPT.replace(
+                    "{char_name}", req["char_name"]
+                ).replace(
+                    "{char_description}", req["char_desc"]
+                )
+
+                recheck_contents = [
+                    recheck_prompt,
+                    f"[Frame: {shot_id}]:",
+                    types.Part.from_bytes(data=frame_bytes, mime_type="image/png")
+                ]
+
+                recheck_response = gemini_call_with_retry(
+                    client=client,
+                    model="gemini-3-flash-preview",
+                    contents=recheck_contents,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+
+                try:
+                    recheck_result = json.loads(recheck_response.text)
+                    is_visible = recheck_result.get("visible", False)
+                    print(f"      {req['entityId']} in {shot_id}: {'✅ VISIBLE' if is_visible else '❌ NOT visible'}")
+
+                    if is_visible:
+                        # Add to character's appearsInShots
+                        for char in character_ledger:
+                            if char["entityId"] == req["entityId"]:
+                                if shot_id not in char["appearsInShots"]:
+                                    char["appearsInShots"].append(shot_id)
+                                    char["appearsInShots"] = sorted(
+                                        char["appearsInShots"],
+                                        key=lambda s: all_shot_ids.index(s) if s in all_shot_ids else 999
+                                    )
+                                    char["shotCount"] = len(char["appearsInShots"])
+                                break
+                except json.JSONDecodeError:
+                    print(f"      ⚠️ Failed to parse re-check for {req['entityId']} in {shot_id}")
+
+        # ============================================================
+        # Combine results
+        # ============================================================
         combined_result = {
             "clusteringSuccess": True,
             "characterLedger": character_ledger,
@@ -1063,14 +1248,17 @@ class FilmIRManager:
             "clusteringSummary": {
                 "totalCharacters": len(character_ledger),
                 "primaryCharacters": len([c for c in character_ledger if c["importance"] == "PRIMARY"]),
-                "secondaryCharacters": len([c for c in character_ledger if c["importance"] == "SECONDARY"]),
+                "secondaryCharacters": len([c for c in character_ledger if c["importance"] != "PRIMARY"]),
                 "totalEnvironments": len(environment_ledger),
                 "totalShots": len(all_shot_ids),
                 "unclusteredShots": []
             }
         }
 
+        # Final summary
         print(f"✅ Character Ledger complete: {len(character_ledger)} characters, {len(environment_ledger)} environments")
+        for char in character_ledger:
+            print(f"   {char['entityId']}: {char['displayName']} → {char['shotCount']}/{len(all_shot_ids)} shots {char['appearsInShots']}")
 
         return process_ledger_result(combined_result, all_shot_ids)
 

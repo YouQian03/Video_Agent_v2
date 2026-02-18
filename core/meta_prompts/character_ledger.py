@@ -1,33 +1,40 @@
 # core/meta_prompts/character_ledger.py
 """
 Meta Prompt: 角色清单生成 (Character Ledger Generation)
-分离式提取：独立的角色提取 + 独立的场景提取
+三阶段架构：Discovery → Presence Audit → Continuity Check
 用于 Pillar II: Narrative Template 的 characterLedger 数据
+
+Architecture:
+  Pass 1 (Discovery): 2-3 key frames → identify cast list (who exists)
+  Pass 2 (Presence Audit): per-character batched frame audit (where they appear)
+  Pass 3 (Continuity Check): deterministic gap-filling + surgical re-check
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 # ============================================================
-# 角色提取提示词 (Character Extraction Prompt)
-# 使用 "Forensic Auditor" 角色确保不遗漏背景角色和群体
+# Pass 1: Character Discovery Prompt
+# Uses 2-3 wide-angle key frames to establish the cast list
 # ============================================================
-CHARACTER_EXTRACTION_PROMPT = """
-# Role: Forensic Character Analyst and Casting Director
-# Task: Create an exhaustive inventory of ALL human or sentient entities mentioned in the shot descriptions.
+CHARACTER_DISCOVERY_PROMPT = """
+# Role: Casting Director
+# Task: Identify ALL distinct characters/entities in this video.
+
+# You are provided with:
+# 1. Text descriptions (Subject, Scene) for ALL shots in the video
+# 2. 2-3 representative KEY FRAMES selected from the widest camera angles
 
 # Instructions:
-1. Audit EVERY shot description sequentially. Do not summarize or skip any shots.
+1. Examine the key frames carefully — they show the most complete view of the scene.
 2. Identify every distinct individual or defined group (e.g., "crowd", "family of four").
-3. CLUSTER IDENTITIES: If a character in shot_05 is clearly the same person as in shot_01 based on description (e.g., "man in car" vs "man walking"), merge them into a single entity.
-4. If a description is vague (e.g., "a person"), treat them as a new character unless context strongly suggests otherwise.
-5. Provide a detailed 'visualDescription' by aggregating all descriptive details from every shot they appear in.
-6. Count the characters; if you find a new person in a shot, you MUST add a new entry. Do not worry about length; accuracy is the priority. Even if there are 10+ characters, list them ALL.
-7. WATERMARK AWARENESS: Source frames may contain watermarks, logos, or social media UI. Do NOT treat these as character features. If a watermark covers a character's face/body, infer the occluded appearance from other shots. Never describe watermarks as tattoos, patterns, or accessories.
+3. For each character, provide a detailed visual description based on what you see in the images.
+4. Assign importance: PRIMARY for main characters (appear frequently, drive the narrative), SECONDARY for minor/background characters.
+5. WATERMARK AWARENESS: Ignore watermarks, logos, or social media UI overlays. Never describe them as character features.
+6. Do NOT determine appearsInShots here — that will be handled in a separate audit step.
 
 # Constraints:
 - Output ONLY valid JSON.
 - No markdown formatting, no conversational filler.
-- Ensure every character mentioned is captured.
 
 # Schema:
 {
@@ -35,15 +42,43 @@ CHARACTER_EXTRACTION_PROMPT = """
     {
       "entityId": "orig_char_01",
       "displayName": "Short descriptive name",
-      "appearsInShots": ["shot_01", "shot_02"],
-      "visualDescription": "Consolidated physical details: clothing, age, expression, props.",
+      "visualDescription": "Detailed physical appearance: species/body type, coloring, clothing, accessories, distinguishing features.",
       "importance": "PRIMARY or SECONDARY"
     }
   ]
 }
 
-# Input Data:
+# Shot Descriptions (for context):
 {shot_subjects}
+"""
+
+# ============================================================
+# Pass 2: Character Presence Audit Prompt
+# Per-character, batched frame verification
+# ============================================================
+CHARACTER_PRESENCE_AUDIT_PROMPT = """
+# Role: Eagle-Eyed Visibility Auditor
+# Task: For the target character described below, examine EVERY frame image independently and determine if this character is physically visible.
+
+# Target Character:
+- Name: {char_name}
+- Visual Description: {char_description}
+
+# CRITICAL RULES:
+1. Check EVERY frame INDEPENDENTLY. Do NOT assume content is the same as previous frames.
+2. A character counts as "visible" even if partially shown (edge of frame, blurred, behind another subject, partially occluded).
+3. Look at the ACTUAL IMAGE content, not just the shot label or description text.
+4. When in doubt, mark as VISIBLE. False positives are far less harmful than false negatives.
+
+# Output format — a JSON array with one entry per frame:
+{
+  "audit": [
+    {"shotId": "shot_01", "visible": true},
+    {"shotId": "shot_02", "visible": false}
+  ]
+}
+
+# Frames to audit:
 """
 
 # ============================================================
@@ -83,10 +118,15 @@ ENVIRONMENT_EXTRACTION_PROMPT = """
 """
 
 # ============================================================
-# 保留旧的合并提示词作为备用 (Legacy combined prompt)
+# Legacy prompt (kept for backward compatibility)
 # ============================================================
-CHARACTER_CLUSTERING_PROMPT = CHARACTER_EXTRACTION_PROMPT  # Alias for backward compatibility
+CHARACTER_EXTRACTION_PROMPT = CHARACTER_DISCOVERY_PROMPT  # Legacy alias
+CHARACTER_CLUSTERING_PROMPT = CHARACTER_DISCOVERY_PROMPT  # Legacy alias
 
+
+# ============================================================
+# Helper Functions
+# ============================================================
 
 def build_shot_subjects_input(shots: List[Dict]) -> str:
     """
@@ -103,13 +143,197 @@ def build_shot_subjects_input(shots: List[Dict]) -> str:
         shot_id = shot.get("shotId", "unknown")
         subject = shot.get("subject", "No subject")
         scene = shot.get("scene", "No scene")
+        first_frame = shot.get("firstFrameDescription", "")
 
         lines.append(f"- {shot_id}:")
         lines.append(f"    Subject: {subject}")
         lines.append(f"    Scene: {scene}")
+        if first_frame:
+            lines.append(f"    FirstFrame: {first_frame}")
         lines.append("")
 
     return "\n".join(lines)
+
+
+def select_key_frames(shots: List[Dict]) -> List[Dict]:
+    """
+    选取 2-3 张最具代表性的宽景帧用于 Discovery Pass
+
+    策略: WS > MS > CU 优先级，从前、中、后三个区间各选一张
+
+    Args:
+        shots: Pillar III 的 concrete shots 列表
+
+    Returns:
+        选中的 2-3 个 shot 字典列表
+    """
+    if len(shots) <= 3:
+        return list(shots)
+
+    # Shot size priority: wider = better for discovering characters
+    size_priority = {
+        "EWS": 0, "VWS": 0, "WS": 1, "MWS": 2, "MS": 3,
+        "MCU": 4, "CU": 5, "BCU": 6, "ECU": 6,
+    }
+
+    def shot_score(shot: Dict) -> int:
+        """Lower score = wider shot = better for discovery"""
+        camera = shot.get("camera", {})
+        shot_size = camera.get("shotSize", shot.get("shotSize", shot.get("shotType", "MS")))
+        return size_priority.get(shot_size, 3)  # Default to MS priority
+
+    # Divide shots into 3 segments: front, middle, back
+    n = len(shots)
+    segments = [
+        shots[:n // 3],               # front
+        shots[n // 3: 2 * n // 3],    # middle
+        shots[2 * n // 3:],           # back
+    ]
+
+    key_frames = []
+    for segment in segments:
+        if segment:
+            # Pick the widest shot in this segment
+            best = min(segment, key=shot_score)
+            key_frames.append(best)
+
+    # Deduplicate (if same shot selected twice)
+    seen_ids = set()
+    unique_frames = []
+    for shot in key_frames:
+        sid = shot.get("shotId", "")
+        if sid not in seen_ids:
+            seen_ids.add(sid)
+            unique_frames.append(shot)
+
+    return unique_frames
+
+
+def check_character_continuity(
+    characters: List[Dict],
+    environments: List[Dict],
+    all_shot_ids: List[str]
+) -> Tuple[List[Dict], List[Dict]]:
+    """
+    Pass 3: 角色连续性检查 — 夹心缺失 + 环境锁定
+
+    规则:
+    - 仅处理 PRIMARY 角色
+    - 角色在同一环境中覆盖率 > 50%
+    - 单镜头空隙: 直接 deterministic gap-fill
+    - 2-3 镜头空隙: 标记为 needs_recheck（由调用方发送单图审计）
+
+    Args:
+        characters: character ledger 列表
+        environments: environment ledger 列表
+        all_shot_ids: 所有 shot ID 有序列表
+
+    Returns:
+        (updated_characters, recheck_requests)
+        recheck_requests: [{"entityId": "...", "shotId": "...", "char_name": "...", "char_desc": "..."}]
+    """
+    # Build environment map: shot_id -> env_id
+    shot_to_env = {}
+    for env in environments:
+        for sid in env.get("appearsInShots", []):
+            shot_to_env[sid] = env.get("entityId", "")
+
+    recheck_requests = []
+
+    for char in characters:
+        if char.get("importance") != "PRIMARY":
+            continue
+
+        appears_set = set(char.get("appearsInShots", []))
+        entity_id = char.get("entityId", "")
+        char_name = char.get("displayName", "")
+        char_desc = char.get("detailedDescription", "") or char.get("visualSignature", "")
+
+        # Group shots by environment
+        env_groups = {}  # env_id -> [shot_ids in order]
+        for sid in all_shot_ids:
+            env_id = shot_to_env.get(sid, "unknown")
+            if env_id not in env_groups:
+                env_groups[env_id] = []
+            env_groups[env_id].append(sid)
+
+        for env_id, env_shots in env_groups.items():
+            if len(env_shots) < 2:
+                continue
+
+            # Coverage in this environment
+            present_in_env = [s for s in env_shots if s in appears_set]
+            coverage = len(present_in_env) / len(env_shots)
+
+            if coverage < 0.5:
+                # Character appears in less than half of this environment's shots
+                # Not a candidate for gap-filling
+                continue
+
+            # Find gaps (consecutive missing shots flanked by present shots)
+            missing_in_env = [s for s in env_shots if s not in appears_set]
+            if not missing_in_env:
+                continue
+
+            # For each missing shot, check if it's a "sandwich gap"
+            for missing_sid in missing_in_env:
+                idx = env_shots.index(missing_sid)
+
+                # Find nearest present shot before and after
+                has_before = any(s in appears_set for s in env_shots[:idx])
+                has_after = any(s in appears_set for s in env_shots[idx + 1:])
+
+                if not (has_before and has_after):
+                    # Not a sandwich — character might have entered/exited
+                    continue
+
+                # Calculate gap size: consecutive missing shots around this one
+                gap_start = idx
+                while gap_start > 0 and env_shots[gap_start - 1] not in appears_set:
+                    gap_start -= 1
+                gap_end = idx
+                while gap_end < len(env_shots) - 1 and env_shots[gap_end + 1] not in appears_set:
+                    gap_end += 1
+                gap_size = gap_end - gap_start + 1
+
+                if gap_size == 1:
+                    # Single-shot gap: deterministic fill
+                    appears_set.add(missing_sid)
+                    print(f"   ✅ [Continuity] Auto-filled {entity_id} into {missing_sid} (1-shot gap in {env_id})")
+                elif gap_size <= 3:
+                    # 2-3 shot gap: request surgical re-check
+                    recheck_requests.append({
+                        "entityId": entity_id,
+                        "shotId": missing_sid,
+                        "char_name": char_name,
+                        "char_desc": char_desc,
+                    })
+                    print(f"   🔍 [Continuity] Requesting re-check for {entity_id} in {missing_sid} ({gap_size}-shot gap in {env_id})")
+                # gap_size > 3: do not fill — character likely genuinely absent
+
+        # Update the character's appearsInShots
+        char["appearsInShots"] = sorted(list(appears_set), key=lambda s: all_shot_ids.index(s) if s in all_shot_ids else 999)
+        char["shotCount"] = len(char["appearsInShots"])
+
+    return characters, recheck_requests
+
+
+# ============================================================
+# Surgical Re-check Prompt (Pass 3 follow-up)
+# Single-image YES/NO verification
+# ============================================================
+SURGICAL_RECHECK_PROMPT = """
+# Task: Is the following character PHYSICALLY VISIBLE in this image?
+
+# Character:
+- Name: {char_name}
+- Appearance: {char_description}
+
+# Rules:
+- Look ONLY at the image. Ignore any text overlays or watermarks.
+- "Visible" includes: partially shown, edge of frame, blurred, behind objects.
+- Answer with ONLY a JSON object: {{"visible": true}} or {{"visible": false}}
+"""
 
 
 def process_ledger_result(ai_output: Dict[str, Any], all_shot_ids: List[str] = None) -> Dict[str, Any]:
@@ -172,30 +396,24 @@ def process_ledger_result(ai_output: Dict[str, Any], all_shot_ids: List[str] = N
 
         environment_ledger.append(normalized)
 
-    # 🎯 Post-processing: Ensure 100% shot coverage
+    # 🎯 Post-processing: Ensure 100% environment shot coverage
     if all_shot_ids:
-        # Collect all covered shots
-        covered_shots = set()
-        for char in character_ledger:
-            covered_shots.update(char.get("appearsInShots", []))
+        # Collect all shots covered by environments
+        env_covered = set()
         for env in environment_ledger:
-            covered_shots.update(env.get("appearsInShots", []))
+            env_covered.update(env.get("appearsInShots", []))
 
-        # Find missing shots
-        missing_shots = [sid for sid in all_shot_ids if sid not in covered_shots]
+        missing_shots = [sid for sid in all_shot_ids if sid not in env_covered]
 
         if missing_shots:
-            print(f"   ⚠️ [Post-processing] {len(missing_shots)} shots not covered: {missing_shots[:5]}{'...' if len(missing_shots) > 5 else ''}")
+            print(f"   ⚠️ [Post-processing] {len(missing_shots)} shots not covered by environments: {missing_shots[:5]}{'...' if len(missing_shots) > 5 else ''}")
 
-            # Add missing shots to a generic environment or create one
             if environment_ledger:
-                # Find the environment with most shots (likely the main setting)
                 main_env = max(environment_ledger, key=lambda e: len(e.get("appearsInShots", [])))
                 main_env["appearsInShots"].extend(missing_shots)
                 main_env["shotCount"] = len(main_env["appearsInShots"])
                 print(f"   ✅ [Post-processing] Added {len(missing_shots)} missing shots to '{main_env['displayName']}'")
             else:
-                # Create a generic environment
                 generic_env = {
                     "entityId": "orig_env_01",
                     "entityType": "ENVIRONMENT",

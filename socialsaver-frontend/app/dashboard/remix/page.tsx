@@ -14,7 +14,7 @@ import { StepIndicator } from "@/components/remix/step-indicator"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Sparkles, ArrowLeft, Video, Play, Download, Share2, Layers, FolderOpen } from "lucide-react"
+import { Loader2, Sparkles, ArrowLeft, Video, Play, Download, Share2, Layers, FolderOpen, Copy } from "lucide-react"
 import { SaveToLibraryDialog } from "@/components/save-to-library-dialog"
 import { saveVideoToLibrary } from "@/lib/asset-storage"
 import { CharacterSceneViews } from "@/components/remix/character-scene-views"
@@ -43,6 +43,7 @@ import {
   pollRemixStatus,
   getRemixDiff,
   getRemixPrompts,
+  useOriginal,
   generateRemixStoryboard,
   finalizeStoryboard,
   generateVideosBatch,
@@ -751,12 +752,6 @@ export default function RemixPage() {
   }
 
   const handleGenerateScript = async () => {
-    // Validate user input first
-    if (!userModifications.trim()) {
-      setApiError("Please describe your remix vision before generating the script.")
-      return
-    }
-
     setStep("generating")
     setApiError(null)
 
@@ -819,6 +814,56 @@ export default function RemixPage() {
       setGeneratedScript(generateMockScript(userModifications, referenceImages))
       setStep("script")
       setDisplayStep("script")
+    }
+  }
+
+  const handleUseOriginal = async () => {
+    setStep("generating")
+    setApiError(null)
+
+    try {
+      if (!currentJobId) {
+        throw new Error("No job ID available. Please upload a video first.")
+      }
+
+      // Synchronous call — no polling needed
+      console.log("📋 Using original video as-is...")
+      await useOriginal(currentJobId)
+      console.log("✅ Original video replicated")
+
+      // Fetch diff and prompts (same as normal flow)
+      console.log("📥 Fetching remix data...")
+      const [remixDiff, remixPrompts] = await Promise.all([
+        getRemixDiff(currentJobId),
+        getRemixPrompts(currentJobId)
+      ])
+      console.log("✅ Remix data received:", remixDiff.summary?.totalShots, "shots")
+
+      // Store identity anchors for character/scene views step
+      if (remixPrompts.identityAnchors) {
+        const charAnchors = remixPrompts.identityAnchors.characters || []
+        const envAnchors = remixPrompts.identityAnchors.environments || []
+        setCharacterAnchors(charAnchors)
+        setEnvironmentAnchors(envAnchors)
+        console.log("📋 Identity anchors stored:", {
+          characters: charAnchors.length,
+          environments: envAnchors.length
+        })
+      }
+
+      // Convert to clean, user-friendly script
+      const replicationPrompt = "Replicate original video (no modifications)"
+      const script = convertToCleanScript(remixDiff, remixPrompts, replicationPrompt)
+      setGeneratedScript(script)
+      setUserModifications(replicationPrompt)
+      setStep("script")
+      setDisplayStep("script")
+
+    } catch (error) {
+      console.error("❌ Use original error:", error)
+      const errorMessage = error instanceof Error ? error.message : "Failed to use original video"
+      setApiError(errorMessage)
+      setStep("results")
     }
   }
 
@@ -1409,6 +1454,29 @@ export default function RemixPage() {
                         <>
                           <Sparkles className="w-4 h-4 mr-2" />
                           Generate Remix Script
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleUseOriginal()
+                      }}
+                      disabled={step === "generating"}
+                      className="w-full bg-accent text-accent-foreground hover:bg-accent/90 relative z-20"
+                      size="lg"
+                    >
+                      {step === "generating" ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4 mr-2" />
+                          Replicate Original Video
                         </>
                       )}
                     </Button>

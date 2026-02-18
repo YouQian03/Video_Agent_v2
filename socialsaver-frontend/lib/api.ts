@@ -599,6 +599,29 @@ export async function pollRemixStatus(
   throw new Error("Remix polling timeout");
 }
 
+/**
+ * Use the original video analysis as-is (no remix modifications).
+ * Synchronous — no polling needed.
+ */
+export async function useOriginal(jobId: string): Promise<{
+  status: string;
+  jobId: string;
+  message: string;
+  totalShots: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/job/${jobId}/use-original`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: "Failed to use original video" }));
+    throw new Error(error.detail || "Failed to use original video");
+  }
+
+  return response.json();
+}
+
 // ============================================================
 // M5: Asset Generation API
 // ============================================================

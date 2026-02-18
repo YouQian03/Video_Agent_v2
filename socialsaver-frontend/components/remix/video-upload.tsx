@@ -1,19 +1,11 @@
 "use client"
 
-import React from "react"
-
-import { useCallback, useState, useRef } from "react"
+import { useCallback, useState } from "react"
 import { useDropzone } from "react-dropzone"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent } from "@/components/ui/card"
-import { Upload, X, Video, FileVideo, Loader2, ImagePlus, ImageIcon } from "lucide-react"
+import { Upload, X, Video, FileVideo, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
-
-interface ReferenceImage {
-  file: File
-  preview: string
-}
 
 interface VideoUploadProps {
   onSubmit: (files: File[], prompt: string, referenceImages: File[]) => void
@@ -23,8 +15,6 @@ interface VideoUploadProps {
 export function VideoUpload({ onSubmit, isLoading }: VideoUploadProps) {
   const [files, setFiles] = useState<File[]>([])
   const [prompt, setPrompt] = useState("")
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([])
-  const refImageInputRef = useRef<HTMLInputElement>(null)
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFiles((prev) => [...prev, ...acceptedFiles])
@@ -42,31 +32,9 @@ export function VideoUpload({ onSubmit, isLoading }: VideoUploadProps) {
     setFiles((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const handleAddReferenceImage = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = e.target.files
-    if (selectedFiles) {
-      const newImages = Array.from(selectedFiles).map((file) => ({
-        file,
-        preview: URL.createObjectURL(file),
-      }))
-      setReferenceImages((prev) => [...prev, ...newImages])
-    }
-    if (refImageInputRef.current) {
-      refImageInputRef.current.value = ""
-    }
-  }
-
-  const removeReferenceImage = (index: number) => {
-    setReferenceImages((prev) => {
-      const removed = prev[index]
-      URL.revokeObjectURL(removed.preview)
-      return prev.filter((_, i) => i !== index)
-    })
-  }
-
   const handleSubmit = () => {
     if (files.length > 0) {
-      onSubmit(files, prompt, referenceImages.map((r) => r.file))
+      onSubmit(files, prompt, [])
     }
   }
 
@@ -134,71 +102,6 @@ export function VideoUpload({ onSubmit, isLoading }: VideoUploadProps) {
           </div>
         </div>
       )}
-
-      {/* Prompt Input with Reference Images */}
-      <div className="space-y-3">
-        <label className="text-sm font-medium text-foreground">
-          Describe your remix requirements (optional)
-        </label>
-        <Textarea
-          placeholder="E.g., Replace Jack with Xiaobai, change the background to a coffee shop, add upbeat music..."
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          rows={4}
-          className="resize-none bg-secondary border-border"
-        />
-
-        {/* Reference Images Section */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-muted-foreground">
-              Reference Images (optional)
-            </label>
-            <input
-              ref={refImageInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleAddReferenceImage}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => refImageInputRef.current?.click()}
-              className="border-border text-muted-foreground hover:text-foreground hover:bg-secondary bg-transparent"
-            >
-              <ImagePlus className="w-4 h-4 mr-1" />
-              Add Reference
-            </Button>
-          </div>
-
-          {referenceImages.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {referenceImages.map((img, index) => (
-                <div
-                  key={index}
-                  className="relative group w-20 h-20 rounded-lg overflow-hidden border border-border"
-                >
-                  <img
-                    src={img.preview || "/placeholder.svg"}
-                    alt={`Reference ${index + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeReferenceImage(index)}
-                    className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  >
-                    <X className="w-5 h-5 text-foreground" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Submit Button */}
       <Button

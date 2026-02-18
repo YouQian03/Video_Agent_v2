@@ -31,6 +31,16 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
     return String(val)
   }
 
+  // Clean description text: remove placeholders like [PROTAGONIST_A & B] and leading "Static. "
+  const cleanDesc = (val: any): string => {
+    const s = safeStr(val)
+    if (s === "-") return s
+    return s
+      .replace(/\s*\[[^\]]*\]\s*/g, " ")   // Remove [PROTAGONIST_A & B] etc.
+      .replace(/^Static\.\s*/i, "")          // Remove leading "Static. "
+      .trim()
+  }
+
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [selectedShot, setSelectedShot] = useState<StoryboardShot | null>(null)
 
@@ -138,11 +148,11 @@ export function StoryboardTable({ data, title = "Storyboard Breakdown", showSave
                     </td>
                     {/* frame_description (Visual Description) */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "250px"}}>
-                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.visualDescription)}</div>
+                      <div className="break-words whitespace-normal text-xs">{cleanDesc(shot.visualDescription)}</div>
                     </td>
                     {/* content_analysis (Content Description) */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "250px"}}>
-                      <div className="break-words whitespace-normal text-xs">{safeStr(shot.contentDescription)}</div>
+                      <div className="break-words whitespace-normal text-xs">{cleanDesc(shot.contentDescription)}</div>
                     </td>
                     {/* Time: start_time / end_time / duration_seconds */}
                     <td className="text-foreground p-3 align-top" style={{minWidth: "130px"}}>

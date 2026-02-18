@@ -1058,6 +1058,157 @@ async def get_remix_prompts(job_id: str):
     }
 
 
+@app.post("/api/job/{job_id}/use-original")
+async def use_original(job_id: str):
+    """
+    Use the original video analysis as-is (no remix modifications).
+    Converts concrete shots directly to remixedLayer format so the downstream
+    pipeline (script display, asset management, storyboard generation) works
+    seamlessly without any AI processing.
+    """
+    from datetime import datetime
+
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    ir_manager = FilmIRManager(job_id)
+
+    # Validate prerequisite: video analysis must be complete
+    if ir_manager.stages.get("specificAnalysis") != "SUCCESS":
+        raise HTTPException(
+            status_code=400,
+            detail="Video analysis not completed. Please wait for video analysis to finish."
+        )
+
+    # Read concrete shots
+    concrete_shots = ir_manager.pillars.get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+    if not concrete_shots:
+        raise HTTPException(
+            status_code=400,
+            detail="No concrete shots found. Video analysis may be incomplete."
+        )
+
+    # Read character/environment ledgers
+    narrative = ir_manager.pillars.get("II_narrativeTemplate", {})
+    character_ledger = narrative.get("characterLedger", [])
+    environment_ledger = narrative.get("environmentLedger", [])
+
+    # Build identity anchors from ledgers
+    char_anchors = []
+    for char in character_ledger:
+        char_anchors.append({
+            "anchorId": char.get("entityId", ""),
+            "anchorName": char.get("displayName", ""),
+            "detailedDescription": char.get("detailedDescription", "") or char.get("visualSignature", ""),
+            "persistentAttributes": char.get("visualCues", []),
+            "imageReference": None,
+            "styleAdaptation": ""
+        })
+
+    env_anchors = []
+    for env in environment_ledger:
+        env_anchors.append({
+            "anchorId": env.get("entityId", ""),
+            "anchorName": env.get("displayName", ""),
+            "detailedDescription": env.get("detailedDescription", "") or env.get("visualSignature", ""),
+            "atmosphericConditions": "",
+            "styleAdaptation": ""
+        })
+
+    identity_anchors = {
+        "characters": char_anchors,
+        "environments": env_anchors
+    }
+
+    # Convert each concrete shot to RemixedShot format
+    remixed_shots = []
+    for shot in concrete_shots:
+        camera = shot.get("camera", {})
+        subject = shot.get("subject", "")
+        scene = shot.get("scene", "")
+        dynamics = shot.get("dynamics", "")
+
+        # T2I_FirstFrame: use firstFrameDescription if available, else compose
+        first_frame = shot.get("firstFrameDescription", "")
+        if not first_frame:
+            first_frame = f"{subject}. {scene}"
+        t2i = f"{first_frame} --ar 16:9"
+
+        # I2V_VideoGen: compose from camera movement + subject + dynamics
+        camera_movement = camera.get("cameraMovement", "Static")
+        i2v_parts = [camera_movement, subject]
+        if dynamics:
+            i2v_parts.append(dynamics)
+        i2v = ". ".join(p for p in i2v_parts if p)
+
+        remixed_shots.append({
+            "shotId": shot.get("shotId", ""),
+            "beatTag": shot.get("beatTag", ""),
+            "startTime": shot.get("startTime", ""),
+            "endTime": shot.get("endTime", ""),
+            "durationSeconds": shot.get("durationSeconds", 0),
+            "cameraPreserved": {
+                "shotSize": camera.get("shotSize", "MEDIUM"),
+                "cameraAngle": camera.get("cameraAngle", "Eye-level"),
+                "cameraMovement": camera_movement,
+                "focalLengthDepth": camera.get("focalLengthDepth", "Standard")
+            },
+            "T2I_FirstFrame": t2i,
+            "I2V_VideoGen": i2v,
+            "remixNotes": f"{subject}. {scene}" if subject and scene else subject or scene,
+            "appliedAnchors": {
+                "characters": shot.get("entityRefs", {}).get("characters", []),
+                "environments": shot.get("entityRefs", {}).get("environments", [])
+            }
+        })
+
+    # Build remixed layer
+    remixed_layer = {
+        "identityAnchors": identity_anchors,
+        "shots": remixed_shots,
+        "summary": {
+            "totalShots": len(remixed_shots),
+            "shotsModified": 0,
+            "primaryChanges": ["Original video - no modifications"],
+            "preservedElements": ["camera skeleton", "narrative rhythm", "beat structure", "all original content"]
+        },
+        "fusionTimestamp": datetime.utcnow().isoformat() + "Z",
+        "fusionSuccess": True
+    }
+
+    # Archive previous intent if exists, then set new intent
+    ir_manager.set_user_intent(
+        raw_prompt="Replicate original video (no modifications)",
+        reference_images=[]
+    )
+
+    # Set parsedIntent to mark this as a replication
+    ir_manager.ir["userIntent"]["parsedIntent"] = {
+        "parseSuccess": True,
+        "isReplication": True,
+        "intentSummary": "Replicate original video without modifications"
+    }
+
+    # Store remixed layer
+    ir_manager.ir["userIntent"]["remixedLayer"] = remixed_layer
+
+    # Distribute to pillars (reuse existing method)
+    ir_manager._distribute_remixed_to_pillars(remixed_layer)
+
+    # Mark intent injection as complete
+    ir_manager.update_stage("intentInjection", "SUCCESS")
+
+    ir_manager.save()
+
+    return {
+        "status": "completed",
+        "jobId": job_id,
+        "message": "Original video replicated successfully",
+        "totalShots": len(remixed_shots)
+    }
+
+
 # ============================================================
 # M6: Remix Storyboard Generation API
 # ============================================================
@@ -1227,6 +1378,19 @@ def generate_storyboard_frame(
                 elif has_uploaded_image:
                     print(f"   🖼️ [Anchor] Environment {anchor_id}: using uploaded image only (no description)")
 
+    # 判断用户是否主动修改了环境（上传了环境参考图 或 手动设置了 detailedDescription）
+    env_user_modified = len(env_reference_images) > 0
+    if not env_user_modified and env_ids and identity_anchors.get("environments"):
+        for env in identity_anchors["environments"]:
+            if env.get("anchorId") in env_ids and env.get("detailedDescription"):
+                env_user_modified = True
+                break
+
+    if env_user_modified:
+        print(f"   🏠 [Environment] User modified environment — will apply new env description/images")
+    else:
+        print(f"   🏠 [Environment] Environment NOT modified by user — will preserve original frame background")
+
     # 合并所有参考图片
     all_reference_images = char_reference_images + env_reference_images
     print(f"   📸 Total reference images loaded: {len(all_reference_images)}")
@@ -1261,21 +1425,87 @@ def generate_storyboard_frame(
             with open(original_frame_path, "rb") as f:
                 original_image_bytes = f.read()
 
+            # 🔄 Pre-process: replace old character names in t2i_prompt with new character type
+            if char_substitutions:
+                import re
+                for sub in char_substitutions:
+                    old_name = sub['anchor_name']  # e.g., "Xiaohua (Tuxedo Cat)" or "Tuxedo Cat (Xiao Hua)"
+                    new_desc = sub['new_desc']     # e.g., "A calico cat with short, soft fur..."
+
+                    # Extract ALL name variants from anchor_name:
+                    # "Xiaohua (Tuxedo Cat)" -> ["Xiaohua", "Tuxedo Cat"]
+                    # "Tuxedo Cat"           -> ["Tuxedo Cat"]
+                    name_variants = []
+                    paren_match = re.match(r'^(.+?)\s*\((.+?)\)\s*$', old_name)
+                    if paren_match:
+                        name_variants.append(paren_match.group(1).strip())  # Outside parens
+                        name_variants.append(paren_match.group(2).strip())  # Inside parens
+                    else:
+                        name_variants.append(old_name.strip())
+
+                    # Extract short type from new_desc: "A calico cat with..." -> "calico cat"
+                    type_match = re.match(
+                        r'^(?:a|an)\s+(.+?)(?:\s+(?:with|who|that|wearing|has|is|sitting|standing|looking|in)\b)',
+                        new_desc, re.IGNORECASE
+                    )
+                    if type_match:
+                        new_short_name = type_match.group(1).strip()
+                    else:
+                        words = new_desc.split()
+                        start = 1 if words and words[0].lower() in ('a', 'an', 'the') else 0
+                        new_short_name = ' '.join(words[start:start + 3])
+
+                    if new_short_name:
+                        def _make_replacer(new_name):
+                            def replacer(m):
+                                matched = m.group(0)
+                                art = re.match(r'^(the |a |an )', matched, re.IGNORECASE)
+                                return (art.group(1) + new_name) if art else new_name
+                            return replacer
+                        # Replace ALL name variants (longest first to avoid partial matches)
+                        for variant in sorted(name_variants, key=len, reverse=True):
+                            if variant:
+                                pattern = re.compile(
+                                    r'(?:the |a |an )?' + re.escape(variant),
+                                    re.IGNORECASE
+                                )
+                                new_prompt = pattern.sub(_make_replacer(new_short_name), t2i_prompt)
+                                if new_prompt != t2i_prompt:
+                                    print(f"   📝 [Text Replace] '{variant}' -> '{new_short_name}' in T2I prompt")
+                                    t2i_prompt = new_prompt
+
             # 构建叙述性 prompt（按照 Gemini 文档建议，使用描述性段落而非指令列表）
             prompt_parts = []
 
             # 🎯 核心指令：明确这是一个图片编辑任务
-            prompt_parts.append("TASK: Edit the provided reference image to match this description.")
-            prompt_parts.append("IMPORTANT: You MUST modify the image. Do NOT return the original unchanged.")
+            if env_user_modified:
+                prompt_parts.append("TASK: Edit the provided reference image to match this description.")
+                prompt_parts.append("IMPORTANT: You MUST modify the image. Do NOT return the original unchanged.")
+            elif char_substitutions:
+                # Only specific characters are being replaced — others must stay unchanged
+                sub_names = ", ".join(f"'{s['anchor_name']}'" for s in char_substitutions)
+                prompt_parts.append(f"TASK: In the provided reference image, replace ONLY the character(s) {sub_names} with the new character(s) shown in the attached reference images. KEEP the background, environment, setting, and ALL OTHER CHARACTERS EXACTLY as they are.")
+                # Build list of unchanged characters to explicitly protect
+                replaced_ids = {s['anchor_id'] for s in char_substitutions}
+                unchanged_chars = []
+                for char in identity_anchors.get("characters", []):
+                    cid = char.get("anchorId", "")
+                    if cid in char_ids and cid not in replaced_ids:
+                        cname = char.get("name", "") or char.get("anchorName", "") or cid
+                        unchanged_chars.append(cname)
+                if unchanged_chars:
+                    prompt_parts.append(f"CRITICAL: The following character(s) must remain EXACTLY as they appear in the original image — do NOT change their appearance in any way: {', '.join(unchanged_chars)}.")
+                prompt_parts.append("The background, scenery, props, lighting, and environment must remain IDENTICAL to the original image.")
+            else:
+                prompt_parts.append("TASK: Replace the characters in the provided reference image while KEEPING the background, environment, and setting EXACTLY as they are.")
+                prompt_parts.append("IMPORTANT: You MUST replace the characters to match the reference images. But the background, scenery, props, lighting, and environment must remain IDENTICAL to the original image.")
 
             # ⚠️ 角色替换：如果有替换角色，先声明旧描述作废，再给场景文本
             if char_substitutions:
-                prompt_parts.append("⚠️ CHARACTER REPLACEMENT OVERRIDE (READ THIS FIRST):")
+                prompt_parts.append("⚠️ CHARACTER REPLACEMENT OVERRIDE:")
                 for sub in char_substitutions:
                     prompt_parts.append(
                         f"  The character originally called '{sub['anchor_name']}' has been COMPLETELY REPLACED by a NEW character. "
-                        f"ALL visual descriptions of '{sub['anchor_name']}' in the scene text below are OUTDATED and WRONG — "
-                        f"ignore any mentions of their old appearance (fur color, markings, body type, clothing, etc). "
                         f"The ONLY correct appearance for this character is shown in the attached reference images for {sub['anchor_id']}. "
                         f"Copy the character's look from those reference images exactly."
                     )
@@ -1316,11 +1546,13 @@ def generate_storyboard_frame(
                 for sub in char_substitutions:
                     prompt_parts.append(f"  [{sub['anchor_id']}]: Appearance defined by attached reference images. {sub['new_desc'][:200]}")
 
-            # 环境详细描述
-            if env_descs:
+            # 环境详细描述（仅在用户主动修改环境时才传递环境文字描述）
+            if env_descs and env_user_modified:
                 prompt_parts.append("ENVIRONMENT DETAILS:")
                 for desc in env_descs:
                     prompt_parts.append(f"  {desc}")
+            elif not env_user_modified:
+                prompt_parts.append("ENVIRONMENT: Keep the background and environment EXACTLY as shown in the original reference image. Do NOT change anything about the setting.")
 
             # 视觉风格
             if style_parts:
@@ -1329,8 +1561,12 @@ def generate_storyboard_frame(
             # 编辑规则
             prompt_parts.append("EDITING RULES (in priority order):")
             prompt_parts.append("1. CHARACTER APPEARANCE: Character appearance MUST match the attached reference images. This OVERRIDES any conflicting text descriptions in TARGET SCENE. If the text says one thing and the image shows another, FOLLOW THE IMAGE.")
-            prompt_parts.append("2. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
-            prompt_parts.append("3. SCENE: Apply scene context (setting, action, mood) from TARGET SCENE, but do NOT change character appearance away from the reference images.")
+            if env_user_modified:
+                prompt_parts.append("2. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
+                prompt_parts.append("3. SCENE: Apply scene context (setting, action, mood) from TARGET SCENE, but do NOT change character appearance away from the reference images.")
+            else:
+                prompt_parts.append("2. BACKGROUND PRESERVATION (CRITICAL): The background, environment, setting, scenery, room layout, furniture, props, lighting, and all non-character elements MUST remain EXACTLY as they appear in the original reference image. Do NOT alter, reimagine, or regenerate the background. Copy it pixel-for-pixel from the original.")
+                prompt_parts.append("3. COMPOSITION: Preserve the camera angle, framing, and overall composition from the original reference image.")
             prompt_parts.append("4. Generate a high-quality cinematic frame.")
             prompt_parts.append("ABSOLUTE PROHIBITIONS: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
 
@@ -1342,11 +1578,17 @@ def generate_storyboard_frame(
                 # 角色参考图放在最前面（用于角色一致性），原始帧放在最后（用于构图参考）
                 contents = [final_prompt]
 
-                # 1. 先添加角色/环境参考图（最多5张人物 + 6张物体）
+                # 1. 先添加角色/环境参考图（最多6张），每张前加文本标签
                 for ref in all_reference_images[:6]:
+                    if 'env' in ref['anchor_id'].lower():
+                        label = f"[ENVIRONMENT REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the environment/scene appearance. IGNORE any characters or people in this image completely.]"
+                    else:
+                        label = f"[CHARACTER REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the character's appearance. IGNORE the background/scene in this image completely.]"
+                    contents.append(label)
                     contents.append(types.Part.from_bytes(data=ref["bytes"], mime_type="image/png"))
 
                 # 2. 最后添加原始帧作为构图参考
+                contents.append("[ORIGINAL FRAME — use this for composition, camera angle, and background. Keep the background EXACTLY as shown here.]")
                 contents.append(types.Part.from_bytes(data=original_image_bytes, mime_type="image/png"))
 
                 return client.models.generate_content(
@@ -1422,8 +1664,8 @@ def generate_storyboard_frame(
                 for sub in char_substitutions:
                     prompt_parts.append(f"Character details [{sub['anchor_id']}]: Appearance defined by attached reference images. {sub['new_desc'][:200]}")
 
-            # 环境详细描述
-            if env_descs:
+            # 环境详细描述（仅在用户主动修改环境时才传递）
+            if env_descs and env_user_modified:
                 for desc in env_descs:
                     prompt_parts.append(f"Environment details: {desc}")
 
@@ -1437,9 +1679,14 @@ def generate_storyboard_frame(
             print(f"   📝 Text prompt: {final_prompt[:300]}...")
 
             def call_gemini_text():
-                # prompt 在前，参考图在后
+                # prompt 在前，参考图在后，每张图前加标签
                 contents = [final_prompt]
                 for ref in all_reference_images[:6]:
+                    if 'env' in ref['anchor_id'].lower():
+                        label = f"[ENVIRONMENT REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the environment/scene appearance. IGNORE any characters or people in this image completely.]"
+                    else:
+                        label = f"[CHARACTER REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the character's appearance. IGNORE the background/scene in this image completely.]"
+                    contents.append(label)
                     contents.append(types.Part.from_bytes(data=ref["bytes"], mime_type="image/png"))
 
                 return client.models.generate_content(

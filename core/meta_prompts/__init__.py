@@ -62,12 +62,17 @@ from .intent_fusion import (
     post_process_remixed_layer
 )
 
-# Character Ledger (Pillar II extension) - Split prompts for better extraction
+# Character Ledger (Pillar II extension) - 3-pass architecture
 from .character_ledger import (
-    CHARACTER_EXTRACTION_PROMPT,
+    CHARACTER_DISCOVERY_PROMPT,
+    CHARACTER_PRESENCE_AUDIT_PROMPT,
+    SURGICAL_RECHECK_PROMPT,
+    CHARACTER_EXTRACTION_PROMPT,  # Legacy alias
     ENVIRONMENT_EXTRACTION_PROMPT,
     CHARACTER_CLUSTERING_PROMPT,  # Legacy alias
     build_shot_subjects_input,
+    select_key_frames,
+    check_character_continuity,
     process_ledger_result,
     get_ledger_display_summary,
     update_shots_with_entity_refs
@@ -94,11 +99,16 @@ __all__ = [
     "convert_narrative_to_frontend",
     "extract_narrative_abstract",
     "extract_narrative_hidden_assets",
-    # Character Ledger (Pillar II extension) - Split prompts
-    "CHARACTER_EXTRACTION_PROMPT",
+    # Character Ledger (Pillar II extension) - 3-pass architecture
+    "CHARACTER_DISCOVERY_PROMPT",
+    "CHARACTER_PRESENCE_AUDIT_PROMPT",
+    "SURGICAL_RECHECK_PROMPT",
+    "CHARACTER_EXTRACTION_PROMPT",  # Legacy alias
     "ENVIRONMENT_EXTRACTION_PROMPT",
     "CHARACTER_CLUSTERING_PROMPT",  # Legacy alias
     "build_shot_subjects_input",
+    "select_key_frames",
+    "check_character_continuity",
     "process_ledger_result",
     "get_ledger_display_summary",
     "update_shots_with_entity_refs",
