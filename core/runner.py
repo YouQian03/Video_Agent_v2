@@ -204,8 +204,8 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     )
     final_parts.append(f"[CONSISTENCY]: {semantic_bridge}")
 
-    # 7. Negative constraints - prevent watermark/logo reproduction
-    final_parts.append("[NEGATIVE CONSTRAINTS]: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
+    # 7. Negative constraints
+    final_parts.append("[NEGATIVE CONSTRAINTS]: The output must NOT contain any text, social media UI, usernames, timestamps, or overlay graphics.")
 
     return "\n\n".join(final_parts)
 
@@ -399,7 +399,7 @@ FORBIDDEN:
 - Changing shot scale, subject position, orientation, or gaze from source
 - Poster layouts, magazine compositions, or storyboard aesthetics
 - Any graphic design elements unless explicitly in style prompt
-- Any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics
+- Any text, social media UI, usernames, timestamps, or overlay graphics
 
 --ar 16:9"""
 
@@ -571,7 +571,7 @@ PHYSICS ENHANCEMENT:
 - Natural motion blur on moving elements
 - Atmospheric depth continuity
 
-PROHIBITIONS: The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.
+PROHIBITIONS: The output must NOT contain any text, social media UI, usernames, timestamps, or overlay graphics.
 
 CRITICAL: Cinematography parameters are LOCKED - preserve exactly as specified.
 high motion quality, cinematic, professional cinematography"""
@@ -763,27 +763,38 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     description, cinema = get_effective_shot_data(job_dir, wf, shot)
     style = wf.get('global', {}).get('style_prompt', '')
 
-    # 🎤 获取该镜头的对白文本
-    dialogue_text = shot.get('dialogue_text', '') or shot.get('dialogueText', '') or shot.get('dialogue', '')
+    # 🎤 获取该镜头的对白/旁白文本
+    dialogue_text = shot.get('dialogue_text', '') or shot.get('dialogueText', '') or ''
+    dialogue_voice = shot.get('dialogue_voice', '') or shot.get('dialogue_voiceover', '') or ''
 
-    # 🎤 构建包含语音的 prompt
-    voice_style = sound_design.get('voiceStyle', 'natural')
-    voice_tone = sound_design.get('voiceTone', 'warm and friendly')
-
-    # 构建 Seedance prompt
+    # 构建 Seedance prompt（按 Seedance 1.5 Pro 文档格式）
     prompt_parts = [description]
 
-    # 🌐 强制英语语音指令
-    prompt_parts.append("[IMPORTANT: All spoken dialogue and voiceover must be in English only. Do not use any other language.]")
-
-    # 如果有对白，添加语音描述
+    # 🎤 如果有对白文本，按 Seedance 原生多语言格式注入
     if dialogue_text and dialogue_text.strip():
-        voice_desc = f'[The character naturally delivers the line: "{dialogue_text}" in a {voice_tone}, {voice_style} English voice.]'
-        prompt_parts.append(voice_desc)
-        print(f"🎤 [Seedance] Adding voiceover (English): {dialogue_text[:50]}...")
+        # 检测是否为中文（含中文字符即视为中文）
+        has_chinese = any('\u4e00' <= c <= '\u9fff' for c in dialogue_text)
+
+        if has_chinese:
+            # 按 Seedance 文档的中文对话格式
+            if dialogue_voice and dialogue_voice.strip():
+                # 有角色声音描述时: "角色用xxx的声音说：'对白'"
+                voice_desc = f'{dialogue_voice}，说："{dialogue_text}"'
+            else:
+                voice_desc = f'角色说："{dialogue_text}"'
+            prompt_parts.append(voice_desc)
+        else:
+            # 英文或其他语言
+            if dialogue_voice and dialogue_voice.strip():
+                voice_desc = f'{dialogue_voice}, saying: "{dialogue_text}"'
+            else:
+                voice_desc = f'The character says: "{dialogue_text}"'
+            prompt_parts.append(voice_desc)
+
+        print(f"🎤 [Seedance] Dialogue ({'Chinese' if has_chinese else 'English'}): {dialogue_text[:60]}...")
 
     prompt_parts.append(f"Style: {style}. Cinematic, high quality, smooth motion.")
-    prompt_parts.append("The output must NOT contain any text, watermarks, logos, social media UI, usernames, timestamps, or overlay graphics.")
+    prompt_parts.append("The output must NOT contain any text, social media UI, usernames, timestamps, or overlay graphics.")
     prompt = " ".join(prompt_parts)
 
     if len(prompt) > 2000:

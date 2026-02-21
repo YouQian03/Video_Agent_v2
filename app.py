@@ -2406,11 +2406,21 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
         from core.workflow_io import load_workflow, save_workflow
         wf = load_workflow(job_dir)
 
+        # 获取原始 concrete shots 用于回读 audio.dialogueText
+        concrete_shots = ir_manager.ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+        concrete_lookup = {s.get("shotId", ""): s for s in concrete_shots}
+
         # 转换 Film IR 格式到 workflow 格式
         workflow_shots = []
         for shot in updated_shots:
             shot_id = shot.get("shotId", "shot_01")
             camera = shot.get("cameraPreserved", {})
+
+            # 从原始 concrete shot 回读对白文本
+            original_shot = concrete_lookup.get(shot_id, {})
+            original_audio = original_shot.get("audio", {})
+            dialogue_text = original_audio.get("dialogueText", "") or ""
+            dialogue_voice = original_audio.get("dialogue", "") or ""
 
             workflow_shots.append({
                 "shot_id": shot_id,
@@ -2433,7 +2443,8 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
                     "camera_angle": camera.get("cameraAngle", ""),
                     "camera_movement": camera.get("cameraMovement", ""),
                 },
-                "dialogue_text": shot.get("action", ""),
+                "dialogue_text": dialogue_text,
+                "dialogue_voice": dialogue_voice,
             })
 
         wf["shots"] = workflow_shots
