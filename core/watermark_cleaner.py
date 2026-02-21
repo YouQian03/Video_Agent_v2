@@ -206,12 +206,13 @@ def _gemini_inpaint(src: Path, dst: Path, description: str) -> bool:
             )
         ]
 
+        # TEXT+IMAGE mode required for image editing (Gemini references the input image)
         config = types.GenerateContentConfig(
-            response_modalities=['IMAGE'],
+            response_modalities=['TEXT', 'IMAGE'],
         )
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-3-pro-image-preview",
             contents=contents,
             config=config
         )
