@@ -763,39 +763,55 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     description, cinema = get_effective_shot_data(job_dir, wf, shot)
     style = wf.get('global', {}).get('style_prompt', '')
 
-    # 🎤 获取该镜头的对白/旁白文本
-    dialogue_text = shot.get('dialogue_text', '') or shot.get('dialogueText', '') or ''
-    dialogue_voice = shot.get('dialogue_voice', '') or shot.get('dialogue_voiceover', '') or ''
+    # 🎤 从 Film IR concrete shots 读取完整的对白数据（声线描述 + 台词文本）
+    dialogue_text = ''
+    dialogue_voice_desc = ''
+    try:
+        import json as _json
+        _film_ir_path = job_dir / "film_ir.json"
+        if _film_ir_path.exists():
+            with open(_film_ir_path, 'r', encoding='utf-8') as _f:
+                _ir = _json.load(_f)
+            _concrete_shots = _ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+            for _cs in _concrete_shots:
+                if _cs.get("shotId") == shot_id:
+                    _audio = _cs.get("audio", {})
+                    if isinstance(_audio, dict):
+                        dialogue_text = _audio.get("dialogueText", "")
+                        dialogue_voice_desc = _audio.get("dialogue", "")  # e.g. "Cat speaking in a high-pitched, inquisitive tone"
+                    break
+    except Exception as _e:
+        print(f"⚠️ [Seedance] Failed to read dialogue from Film IR: {_e}")
 
-    # 构建 Seedance prompt（按 Seedance 1.5 Pro 文档格式）
-    prompt_parts = [description]
+    # Fallback: 从 workflow shot 读取
+    if not dialogue_text:
+        dialogue_text = shot.get('dialogue_text', '') or shot.get('dialogueText', '') or ''
+    if not dialogue_voice_desc:
+        dialogue_voice_desc = shot.get('dialogue_voice', '') or shot.get('dialogue_voiceover', '') or ''
 
-    # 🎤 如果有对白文本，按 Seedance 原生多语言格式注入
+    # 🎤 构建 Seedance prompt —— 按官方文档格式，将台词嵌入场景描述
     if dialogue_text and dialogue_text.strip():
-        # 检测是否为中文（含中文字符即视为中文）
         has_chinese = any('\u4e00' <= c <= '\u9fff' for c in dialogue_text)
 
-        if has_chinese:
-            # 按 Seedance 文档的中文对话格式
-            if dialogue_voice and dialogue_voice.strip():
-                # 有角色声音描述时: "角色用xxx的声音说：'对白'"
-                voice_desc = f'{dialogue_voice}，说："{dialogue_text}"'
+        # 构建 Seedance 原生对白格式（嵌入场景描述末尾）
+        if dialogue_voice_desc and dialogue_voice_desc.strip():
+            # 有声线描述: "Cat speaking in a high-pitched tone" → 用作情感/语气控制
+            if has_chinese:
+                dialogue_block = f'{dialogue_voice_desc}, says in Mandarin："{dialogue_text}"'
             else:
-                voice_desc = f'角色说："{dialogue_text}"'
-            prompt_parts.append(voice_desc)
+                dialogue_block = f'{dialogue_voice_desc}, saying: "{dialogue_text}"'
         else:
-            # 英文或其他语言
-            if dialogue_voice and dialogue_voice.strip():
-                voice_desc = f'{dialogue_voice}, saying: "{dialogue_text}"'
+            if has_chinese:
+                dialogue_block = f'The character says in Mandarin："{dialogue_text}"'
             else:
-                voice_desc = f'The character says: "{dialogue_text}"'
-            prompt_parts.append(voice_desc)
+                dialogue_block = f'The character says: "{dialogue_text}"'
 
+        # 🎯 关键：台词嵌入场景描述，不作为独立段落
+        prompt = f'{description}\n{dialogue_block}\nStyle: {style}. Cinematic, high quality, smooth motion.'
         print(f"🎤 [Seedance] Dialogue ({'Chinese' if has_chinese else 'English'}): {dialogue_text[:60]}...")
-
-    prompt_parts.append(f"Style: {style}. Cinematic, high quality, smooth motion.")
-    prompt_parts.append("The output must NOT contain any text, social media UI, usernames, timestamps, or overlay graphics.")
-    prompt = " ".join(prompt_parts)
+        print(f"🎤 [Seedance] Voice desc: {dialogue_voice_desc[:80]}")
+    else:
+        prompt = f'{description}\nStyle: {style}. Cinematic, high quality, smooth motion.'
 
     if len(prompt) > 2000:
         prompt = prompt[:2000]
