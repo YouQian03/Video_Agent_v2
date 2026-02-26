@@ -82,6 +82,8 @@ SHOT_DECOMPOSITION_PROMPT = """
     "shots": [
       {
         "shotId": "shot_01",
+        "contentClass": "NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD",
+        "isNarrative": true,
         "beatTag": "HOOK | SETUP | CATALYST | RISING | TURN | CLIMAX | FALLING | RESOLUTION",
         "startTime": "00:00:00.000",
         "endTime": "00:00:03.200",
@@ -160,13 +162,44 @@ SHOT_DECOMPOSITION_PROMPT = """
 - Add shot-specific exclusions based on content (e.g., for close-up: `"visible pores exaggerated, skin smoothing"`)
 - For stylized content, exclude conflicting styles (e.g., `"photorealistic"` for animation)
 
-### Watermark & Overlay Detection (CRITICAL)
-- Carefully inspect EVERY shot for watermarks, logos, social media UI overlays (TikTok, Instagram, YouTube), usernames, timestamps, or any non-diegetic text/graphics
-- Set `watermarkInfo.hasWatermark` to `true` if ANY overlay is detected, `false` otherwise
-- In `watermarkInfo.description`, specify the type and position (e.g., "TikTok logo top-right corner, username '@creator' bottom-left")
-- Set `watermarkInfo.occludesSubject` to `true` if the watermark covers any part of a character's face or body
-- In `watermarkInfo.occludedArea`, describe what part of the subject is obscured (e.g., "partially covers subject's right cheek") or "none" if no occlusion
-- Do NOT describe watermark artifacts as character features in `firstFrameDescription` or `subject` fields — always describe the character's TRUE appearance beneath any overlays
+### Shot Content Classification (MANDATORY — evaluate BEFORE detailed analysis)
+Classify each shot's primary content type into `contentClass`:
+- `NARRATIVE` — Real video content with characters, actions, environments, dialogue.
+- `BRAND_SPLASH` — Full-screen logo, brand mark, animated brand reveal, product splash. The logo IS the content. Set isNarrative: false.
+- `OVERLAY_CONTENT` — Narrative content with platform watermarks/usernames/timestamps overlaid.
+- `ENDCARD` — Closing static screen: credits, CTAs, subscribe buttons, URLs. Set isNarrative: false.
+
+Rules:
+- Evaluate contentClass FIRST, before writing firstFrameDescription/subject/scene.
+- If contentClass is BRAND_SPLASH or ENDCARD → set isNarrative: false.
+- contentClass MUST be consistent with watermarkInfo.type:
+  NARRATIVE → type="none" | BRAND_SPLASH → type="brand_logo" | OVERLAY_CONTENT → type="channel_watermark" | ENDCARD → type="endcard"
+- If the frame shows ONLY a logo/brand name with no human subjects or narrative action → contentClass MUST be BRAND_SPLASH.
+
+### Visual Overlay & Branding Classification (CRITICAL)
+Classify every shot's non-narrative visual elements into `watermarkInfo`:
+
+1. Inspect for overlays: watermarks, logos, social media UI (TikTok, Instagram, YouTube), usernames, timestamps, any non-diegetic text/graphics.
+2. Inspect for full-screen brand content: If the shot's PRIMARY content is a logo, brand mark, splash screen, or closing card with NO narrative action, it MUST be classified — it is NOT "none".
+
+Classification rules for `watermarkInfo.type`:
+  - `"channel_watermark"` — Platform UI overlays: watermarks, usernames, timestamps, social media chrome. These will be auto-removed.
+  - `"brand_logo"` — Brand/product logos, whether overlaid on narrative content OR occupying the full screen (splash screens, animated logos, brand reveals). This includes shots where the logo IS the sole subject.
+  - `"endcard"` — Static or semi-static closing screens: credits, "Download Now" CTAs, website URLs, brand collages with no narrative action.
+  - `"none"` — Pure narrative content with zero overlays and zero branding screens.
+
+Set `watermarkInfo.hasWatermark`:
+  - `true` if the shot contains ANY overlay, branding screen, or full-screen logo — even if the logo IS the entire content.
+  - `false` ONLY for pure narrative shots with zero non-diegetic elements.
+
+### MANDATORY RULE:
+- If the `subject` field contains words like "logo", "brand", "branding", "company name", "title card", or "splash screen", the type MUST be "brand_logo" or "endcard" — NEVER "none".
+- A full-screen animated logo is NOT a "scene" or "environment" — it is branding content.
+
+In `watermarkInfo.description`, specify what branding is present and its position/coverage.
+Set `watermarkInfo.occludesSubject` to `true` if any overlay covers a character's face or body.
+In `watermarkInfo.occludedArea`, describe the obscured area or "none".
+Do NOT describe watermark/branding artifacts as character features in `firstFrameDescription` or `subject` — describe the character's TRUE appearance beneath overlays.
 
 ---
 
@@ -277,6 +310,8 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
         concrete = shot.get("concrete", {})
         shot_data = {
             "shotId": shot.get("shotId"),
+            "contentClass": shot.get("contentClass", "NARRATIVE"),
+            "isNarrative": shot.get("isNarrative", True),
             "beatTag": shot.get("beatTag"),
             "startTime": shot.get("startTime"),
             "endTime": shot.get("endTime"),
@@ -293,7 +328,7 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
             "audio": concrete.get("audio", {}),
             "style": concrete.get("style", ""),
             "negative": concrete.get("negative", ""),
-            "watermarkInfo": concrete.get("watermarkInfo", {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"})
+            "watermarkInfo": concrete.get("watermarkInfo", {"hasWatermark": False, "type": "none", "description": "", "occludesSubject": False, "occludedArea": "none"})
         }
         shots_concrete.append(shot_data)
 
@@ -500,6 +535,21 @@ You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
 - Crane/Boom: Epic scale, transitions | Handheld: Urgency, realism
 - Arc/Orbit: Character showcase | Steadicam: Smooth following
 
+## Shot Content Classification (MANDATORY — evaluate BEFORE detailed analysis)
+
+For EACH shot, classify its primary content type into `contentClass`:
+- `NARRATIVE` — Real video content with characters, actions, environments, dialogue.
+- `BRAND_SPLASH` — Full-screen logo, brand mark, animated brand reveal, product splash. The logo IS the content. Set isNarrative: false.
+- `OVERLAY_CONTENT` — Narrative content with platform watermarks/usernames/timestamps overlaid.
+- `ENDCARD` — Closing static screen: credits, CTAs, subscribe buttons, URLs. Set isNarrative: false.
+
+Rules:
+- Evaluate contentClass FIRST, before writing firstFrameDescription/subject/scene.
+- If contentClass is BRAND_SPLASH or ENDCARD → set isNarrative: false.
+- contentClass MUST be consistent with watermarkInfo.type:
+  NARRATIVE → type="none" | BRAND_SPLASH → type="brand_logo" | OVERLAY_CONTENT → type="channel_watermark" | ENDCARD → type="endcard"
+- If the frame shows ONLY a logo/brand name with no human subjects or narrative action → contentClass MUST be BRAND_SPLASH.
+
 ## Shots to Analyze
 {shot_boundaries}
 
@@ -514,6 +564,8 @@ You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
   "shots": [
     {
       "shotId": "shot_XX",
+      "contentClass": "NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD",
+      "isNarrative": true,
       "concrete": {
         "firstFrameDescription": "CRITICAL: 50-80 word exact static composition of frame 1. Include: subject pose, facial expression, gaze direction, hand positions, body orientation, background elements, clothing details.",
 
@@ -544,8 +596,9 @@ You are analyzing shots {batch_start} to {batch_end} of {total_shots} total.
         "negative": "blurry, extra limbs, malformed hands, text, watermark, [add shot-specific exclusions]",
 
         "watermarkInfo": {
-          "hasWatermark": true,
-          "description": "e.g., 'TikTok logo top-right, username @user bottom-left'",
+          "hasWatermark": "true if ANY overlay OR full-screen branding (logo, endcard) exists",
+          "type": "channel_watermark | brand_logo | endcard | none",
+          "description": "e.g., 'Full-screen animated company logo' or 'TikTok logo top-right'",
           "occludesSubject": false,
           "occludedArea": "e.g., 'partially covers subject face' or 'none'"
         }
@@ -702,7 +755,7 @@ def merge_batch_results(
                     "audio": detailed.get("audio", concrete_nested.get("audio", {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""})),
                     "style": detailed.get("style", "") or concrete_nested.get("style", ""),
                     "negative": detailed.get("negative", "") or concrete_nested.get("negative", "blurry, extra limbs, malformed hands, text, watermark"),
-                    "watermarkInfo": detailed.get("watermarkInfo", concrete_nested.get("watermarkInfo", {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"}))
+                    "watermarkInfo": detailed.get("watermarkInfo", concrete_nested.get("watermarkInfo", {"hasWatermark": False, "type": "none", "description": "", "occludesSubject": False, "occludedArea": "none"}))
                 }
                 # 提取 abstract 相关字段
                 abstract_data = {
@@ -722,6 +775,8 @@ def merge_batch_results(
 
             merged_shot = {
                 "shotId": shot_id,
+                "contentClass": detailed.get("contentClass", "NARRATIVE"),
+                "isNarrative": detailed.get("isNarrative", True),
                 "beatTag": basic_shot.get("beatTag"),
                 "startTime": basic_shot.get("startTime"),
                 "endTime": basic_shot.get("endTime"),
@@ -736,6 +791,8 @@ def merge_batch_results(
             # 使用降级数据 (Phase 1 基础信息)
             merged_shot = {
                 "shotId": shot_id,
+                "contentClass": "NARRATIVE",
+                "isNarrative": True,
                 "beatTag": basic_shot.get("beatTag"),
                 "startTime": basic_shot.get("startTime"),
                 "endTime": basic_shot.get("endTime"),
@@ -752,7 +809,7 @@ def merge_batch_results(
                     "audio": {"soundDesign": "", "music": "", "dialogue": "", "dialogueText": ""},
                     "style": "",
                     "negative": "blurry, extra limbs, malformed hands, text, watermark",
-                    "watermarkInfo": {"hasWatermark": False, "description": "", "occludesSubject": False, "occludedArea": "none"}
+                    "watermarkInfo": {"hasWatermark": False, "type": "none", "description": "", "occludesSubject": False, "occludedArea": "none"}
                 },
                 "abstract": {
                     "narrativeFunction": "",
@@ -765,6 +822,9 @@ def merge_batch_results(
             }
 
         merged_shots.append(merged_shot)
+
+    # Post-processing: enforce branding classification for full-screen logo shots
+    _enforce_branding_classification(merged_shots)
 
     # 构建最终结果
     result = {
@@ -782,3 +842,62 @@ def merge_batch_results(
     }
 
     return result
+
+
+# ============================================================
+# Post-processing: Branding Classification Enforcement
+# ============================================================
+
+_BRAND_KEYWORDS = [
+    "logo", "brand", "branding", "company name", "title card",
+    "splash screen", "end card", "end screen", "end slate",
+    "closing screen", "closing card", "credits", "outro",
+]
+
+_ENDCARD_KEYWORDS = [
+    "end card", "end screen", "end slate", "ending screen",
+    "closing screen", "closing card", "credits", "outro",
+]
+
+
+def _enforce_branding_classification(shots: List[Dict[str, Any]]) -> None:
+    """
+    Scan all shots' subject/scene fields for branding keywords.
+    Sets contentClass and isNarrative accordingly.
+
+    Phase A: keyword hit → set isNarrative: false + contentClass
+    Phase B: fill missing contentClass / isNarrative defaults
+
+    Mutates shots in place.
+    """
+    for shot in shots:
+        # Support both nested concrete and flat shot structures
+        concrete = shot.get("concrete", {})
+        if not isinstance(concrete, dict):
+            concrete = {}
+
+        subject = (concrete.get("subject") or shot.get("subject") or "").lower()
+        scene = (concrete.get("scene") or shot.get("scene") or "").lower()
+        combined = f"{subject} {scene}"
+
+        content_class = shot.get("contentClass")
+
+        # --- Phase A: keyword-triggered classification ---
+        matched = any(kw in combined for kw in _BRAND_KEYWORDS)
+        if matched and not content_class:
+            is_endcard = any(kw in combined for kw in _ENDCARD_KEYWORDS)
+            new_class = "ENDCARD" if is_endcard else "BRAND_SPLASH"
+            shot_id = shot.get("shotId", "??")
+            print(f"🏷️ [Post-process] {shot_id}: branding keywords detected → contentClass={new_class}")
+            shot["contentClass"] = new_class
+            shot["isNarrative"] = False
+            continue
+
+        # --- Phase B: fill missing defaults ---
+        if not shot.get("contentClass"):
+            shot["contentClass"] = "NARRATIVE"
+        # Force isNarrative=false for non-narrative content classes
+        if shot["contentClass"] in ("BRAND_SPLASH", "ENDCARD"):
+            shot["isNarrative"] = False
+        elif "isNarrative" not in shot:
+            shot["isNarrative"] = shot["contentClass"] in ("NARRATIVE", "OVERLAY_CONTENT")

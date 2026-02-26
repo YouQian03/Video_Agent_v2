@@ -193,6 +193,82 @@ async def read_index():
 # ============================================================
 upload_analysis_tasks: Dict[str, Dict[str, Any]] = {}
 
+# ============================================================
+# 异步水印清洁追踪
+# ============================================================
+watermark_cleaning_tasks: Dict[str, Dict[str, Any]] = {}
+
+
+def _run_watermark_cleaning_background(job_id: str):
+    """后台执行水印清洁，不阻塞初始化"""
+    from core.film_ir_io import load_film_ir, save_film_ir
+    from core.watermark_cleaner import clean_frames
+
+    job_dir = Path("jobs") / job_id
+    watermark_cleaning_tasks[job_id] = {
+        "status": "running",
+        "message": "水印清洁进行中...",
+        "started_at": datetime.now().isoformat()
+    }
+
+    try:
+        ir = load_film_ir(job_dir)
+        if not ir:
+            watermark_cleaning_tasks[job_id] = {
+                "status": "failed",
+                "message": "Film IR not found",
+                "failed_at": datetime.now().isoformat()
+            }
+            return
+
+        shots = ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+        if not shots:
+            watermark_cleaning_tasks[job_id] = {
+                "status": "completed",
+                "message": "No shots to clean",
+                "completed_at": datetime.now().isoformat()
+            }
+            return
+
+        # Initialize all shots' cleaningStatus to PENDING
+        for s in shots:
+            s["cleaningStatus"] = "PENDING"
+        save_film_ir(job_dir, ir)
+
+        # Run cleaning
+        cleaning_stats = clean_frames(job_dir, shots)
+        print(f"🧹 [Background Cleaning] {job_id}: {cleaning_stats}")
+
+        # Update each shot's cleaningStatus from results
+        shot_statuses = cleaning_stats.get("shot_statuses", {})
+        ir = load_film_ir(job_dir)
+        shots = ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+        for s in shots:
+            sid = s.get("shotId", "")
+            if sid in shot_statuses:
+                s["cleaningStatus"] = shot_statuses[sid]
+            elif s.get("cleaningStatus") == "PENDING":
+                s["cleaningStatus"] = "SKIPPED"
+
+        save_film_ir(job_dir, ir)
+
+        watermark_cleaning_tasks[job_id] = {
+            "status": "completed",
+            "message": f"清洁完成: {cleaning_stats.get('cleaned', 0)} cleaned, {cleaning_stats.get('skipped', 0)} skipped",
+            "stats": {k: v for k, v in cleaning_stats.items() if k != "shot_statuses"},
+            "completed_at": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        print(f"❌ [Background Cleaning] {job_id} failed: {e}")
+        import traceback
+        traceback.print_exc()
+        watermark_cleaning_tasks[job_id] = {
+            "status": "failed",
+            "message": str(e),
+            "failed_at": datetime.now().isoformat()
+        }
+
 
 def _run_upload_analysis_background(job_id: str, video_path: Path):
     """后台执行视频分析"""
@@ -218,6 +294,15 @@ def _run_upload_analysis_background(job_id: str, video_path: Path):
             "completed_at": datetime.now().isoformat()
         }
         print(f"✅ [全部完成] 新项目已就绪: {job_id}")
+
+        # Trigger background watermark cleaning (non-blocking)
+        import threading
+        threading.Thread(
+            target=_run_watermark_cleaning_background,
+            args=(job_id,),
+            daemon=True
+        ).start()
+        print(f"🧹 [Background] Watermark cleaning started for: {job_id}")
 
     except Exception as e:
         print(f"❌ [后台分析失败] {job_id}: {str(e)}")
@@ -299,6 +384,33 @@ async def get_upload_status(job_id: str):
             return {"status": "unknown", "stage": "unknown", "message": "Job 存在但状态未知"}
 
     raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+
+@app.get("/api/job/{job_id}/cleaning-status")
+async def get_cleaning_status(job_id: str):
+    """获取水印清洁状态（用于前端轮询）"""
+    if job_id in watermark_cleaning_tasks:
+        return watermark_cleaning_tasks[job_id]
+
+    # Fallback: check film_ir.json for cleaningStatus fields
+    job_dir = Path("jobs") / job_id
+    if job_dir.exists():
+        try:
+            ir = load_film_ir(job_dir)
+            if ir:
+                shots = ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+                statuses = {s.get("shotId", ""): s.get("cleaningStatus", "UNKNOWN") for s in shots}
+                has_pending = any(v == "PENDING" for v in statuses.values())
+                has_cleaned = any(v in ("CLEANED", "SKIPPED") for v in statuses.values())
+                if has_pending:
+                    return {"status": "running", "shot_statuses": statuses}
+                elif has_cleaned:
+                    return {"status": "completed", "shot_statuses": statuses}
+        except Exception:
+            pass
+
+    return {"status": "not_started"}
+
 
 @app.get("/api/workflow")
 async def get_workflow(job_id: Optional[str] = None):
@@ -1220,7 +1332,9 @@ def generate_storyboard_frame(
     t2i_prompt: str,
     applied_anchors: dict,
     identity_anchors: dict,
-    visual_style: dict
+    visual_style: dict,
+    watermark_info: dict = None,
+    is_replication: bool = False
 ) -> str:
     """
     使用 Gemini 生成分镜首帧图片（基于原始帧进行编辑，保持构图一致性）
@@ -1233,6 +1347,7 @@ def generate_storyboard_frame(
         applied_anchors: 该镜头应用的锚点 {"characters": [...], "environments": [...]}
         identity_anchors: 完整的身份锚点数据
         visual_style: 视觉风格配置
+        watermark_info: 水印检测信息 (optional, used for endcard detection)
 
     Returns:
         生成图片的 URL 路径
@@ -1246,6 +1361,21 @@ def generate_storyboard_frame(
     # 创建 storyboard_frames 目录
     storyboard_dir = job_dir / "storyboard_frames"
     storyboard_dir.mkdir(exist_ok=True)
+
+    # 🎯 Endcard early-return: preserve original frame without AI editing
+    wm_type = (watermark_info or {}).get("type", "none")
+    if wm_type == "endcard":
+        original_frame_path = job_dir / "frames" / f"{shot_id}.png"
+        if original_frame_path.exists():
+            # Copy original frame to storyboard directory as-is
+            import shutil
+            dst = storyboard_dir / f"{shot_id}.png"
+            shutil.copy2(str(original_frame_path), str(dst))
+            print(f"   📋 [ENDCARD] {shot_id}: end card preserved (original frame used)")
+            return f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
+        else:
+            print(f"   📋 [ENDCARD] {shot_id}: end card but no original frame found")
+            return ""
 
     # 🎯 查找原始帧作为参考（保持构图一致性的关键）
     original_frame_path = job_dir / "frames" / f"{shot_id}.png"
@@ -1378,6 +1508,46 @@ def generate_storyboard_frame(
                 elif has_uploaded_image:
                     print(f"   🖼️ [Anchor] Environment {anchor_id}: using uploaded image only (no description)")
 
+    # 3. 收集产品参考图片 (product anchors — logo/brand replacements)
+    product_reference_images = []
+    product_descs = []
+    products = identity_anchors.get("products", [])
+    applied_products = applied_anchors.get("products", [])
+    for product in products:
+        anchor_id = product.get("anchorId", "")
+        # Include product if explicitly applied, or if no products are explicitly applied (apply all)
+        if applied_products and anchor_id not in applied_products:
+            continue
+
+        three_views = product.get("threeViews", {})
+        has_product_image = False
+        for view_type in ["front", "side", "back"]:
+            view_path = three_views.get(view_type)
+            if view_path:
+                if not os.path.isabs(view_path):
+                    if view_path.startswith("jobs/"):
+                        pass
+                    elif "/" not in view_path:
+                        view_path = str(job_dir / "assets" / view_path)
+                if os.path.exists(view_path):
+                    try:
+                        with open(view_path, "rb") as f:
+                            img_bytes = f.read()
+                            product_reference_images.append({
+                                "anchor_id": anchor_id,
+                                "view": view_type,
+                                "bytes": img_bytes
+                            })
+                            has_product_image = True
+                            print(f"   🖼️ [Reference] Loaded product {anchor_id} {view_type} view from {view_path}")
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to load {view_path}: {e}")
+
+        product_desc = product.get("description", "")
+        if product_desc:
+            product_descs.append(f"[{anchor_id}]: {product_desc[:300]}")
+            print(f"   🏷️ [Anchor] Applied product: {anchor_id} -> {product_desc[:50]}...")
+
     # 判断用户是否主动修改了环境（上传了环境参考图 或 手动设置了 detailedDescription）
     env_user_modified = len(env_reference_images) > 0
     if not env_user_modified and env_ids and identity_anchors.get("environments"):
@@ -1392,8 +1562,8 @@ def generate_storyboard_frame(
         print(f"   🏠 [Environment] Environment NOT modified by user — will preserve original frame background")
 
     # 合并所有参考图片
-    all_reference_images = char_reference_images + env_reference_images
-    print(f"   📸 Total reference images loaded: {len(all_reference_images)}")
+    all_reference_images = char_reference_images + env_reference_images + product_reference_images
+    print(f"   📸 Total reference images loaded: {len(all_reference_images)} (char: {len(char_reference_images)}, env: {len(env_reference_images)}, product: {len(product_reference_images)})")
 
     # 3. 收集视觉风格
     style_parts = []
@@ -1496,7 +1666,11 @@ def generate_storyboard_frame(
                 if unchanged_chars:
                     prompt_parts.append(f"CRITICAL: The following character(s) must remain EXACTLY as they appear in the original image — do NOT change their appearance in any way: {', '.join(unchanged_chars)}.")
                 prompt_parts.append("The background, scenery, props, lighting, and environment must remain IDENTICAL to the original image.")
+            elif is_replication and not all_reference_images:
+                # Use-original mode with no modifications — faithful recreation for copyright safety
+                prompt_parts.append("TASK: Recreate the provided reference image as faithfully as possible. Reproduce the same scene, characters, composition, lighting, and mood. The output should be a high-fidelity recreation that preserves the original's visual intent.")
             else:
+                # Remix mode or has reference images — replace/edit characters
                 prompt_parts.append("TASK: Replace the characters in the provided reference image while KEEPING the background, environment, and setting EXACTLY as they are.")
                 prompt_parts.append("IMPORTANT: You MUST replace the characters to match the reference images. But the background, scenery, props, lighting, and environment must remain IDENTICAL to the original image.")
 
@@ -1554,6 +1728,14 @@ def generate_storyboard_frame(
             elif not env_user_modified:
                 prompt_parts.append("ENVIRONMENT: Keep the background and environment EXACTLY as shown in the original reference image. Do NOT change anything about the setting.")
 
+            # 产品/Logo 替换详细描述
+            if product_descs:
+                prompt_parts.append("PRODUCT/LOGO DETAILS:")
+                for desc in product_descs:
+                    prompt_parts.append(f"  {desc}")
+            if product_reference_images:
+                prompt_parts.append(f"PRODUCT REFERENCES: I have provided {len(product_reference_images)} product reference images. Replace the original brand logo/product with these.")
+
             # 视觉风格
             if style_parts:
                 prompt_parts.append(f"VISUAL STYLE: {', '.join(style_parts)}")
@@ -1578,9 +1760,11 @@ def generate_storyboard_frame(
                 # 角色参考图放在最前面（用于角色一致性），原始帧放在最后（用于构图参考）
                 contents = [final_prompt]
 
-                # 1. 先添加角色/环境参考图（最多6张），每张前加文本标签
+                # 1. 先添加角色/环境/产品参考图（最多6张），每张前加文本标签
                 for ref in all_reference_images[:6]:
-                    if 'env' in ref['anchor_id'].lower():
+                    if 'product' in ref['anchor_id'].lower():
+                        label = f"[PRODUCT/LOGO REFERENCE — {ref['anchor_id']} {ref['view']} view. Replace the original brand logo with this product. Maintain position, scale, and integration with the scene.]"
+                    elif 'env' in ref['anchor_id'].lower():
                         label = f"[ENVIRONMENT REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the environment/scene appearance. IGNORE any characters or people in this image completely.]"
                     else:
                         label = f"[CHARACTER REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the character's appearance. IGNORE the background/scene in this image completely.]"
@@ -1602,14 +1786,15 @@ def generate_storyboard_frame(
                     ),
                 )
 
-            TIMEOUT_SECONDS = 180  # 增加超时时间，因为 Pro 模型可能需要更长时间
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(call_gemini_edit)
-                try:
-                    response = future.result(timeout=TIMEOUT_SECONDS)
-                except concurrent.futures.TimeoutError:
-                    print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
-                    return ""
+            TIMEOUT_SECONDS = 180
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(call_gemini_edit)
+            try:
+                response = future.result(timeout=TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
+                executor.shutdown(wait=False, cancel_futures=True)
+                return ""
 
         else:
             # ⚠️ 无原始帧参考：使用三视图参考图 + 文本生成
@@ -1669,6 +1854,13 @@ def generate_storyboard_frame(
                 for desc in env_descs:
                     prompt_parts.append(f"Environment details: {desc}")
 
+            # 产品/Logo 替换详细描述
+            if product_descs:
+                for desc in product_descs:
+                    prompt_parts.append(f"Product/Logo details: {desc}")
+            if product_reference_images:
+                prompt_parts.append(f"I have provided {len(product_reference_images)} product reference images. Replace the original brand logo/product with these.")
+
             # 视觉风格
             if style_parts:
                 prompt_parts.append(f"Visual style: {', '.join(style_parts)}")
@@ -1682,7 +1874,9 @@ def generate_storyboard_frame(
                 # prompt 在前，参考图在后，每张图前加标签
                 contents = [final_prompt]
                 for ref in all_reference_images[:6]:
-                    if 'env' in ref['anchor_id'].lower():
+                    if 'product' in ref['anchor_id'].lower():
+                        label = f"[PRODUCT/LOGO REFERENCE — {ref['anchor_id']} {ref['view']} view. Replace the original brand logo with this product. Maintain position, scale, and integration with the scene.]"
+                    elif 'env' in ref['anchor_id'].lower():
                         label = f"[ENVIRONMENT REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the environment/scene appearance. IGNORE any characters or people in this image completely.]"
                     else:
                         label = f"[CHARACTER REFERENCE — {ref['anchor_id']} {ref['view']} view. ONLY use this image for the character's appearance. IGNORE the background/scene in this image completely.]"
@@ -1701,13 +1895,14 @@ def generate_storyboard_frame(
                 )
 
             TIMEOUT_SECONDS = 120
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(call_gemini_text)
-                try:
-                    response = future.result(timeout=TIMEOUT_SECONDS)
-                except concurrent.futures.TimeoutError:
-                    print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
-                    return ""
+            executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(call_gemini_text)
+            try:
+                response = future.result(timeout=TIMEOUT_SECONDS)
+            except concurrent.futures.TimeoutError:
+                print(f"   ⏱️ Timeout after {TIMEOUT_SECONDS}s for {shot_id}, skipping...")
+                executor.shutdown(wait=False, cancel_futures=True)
+                return ""
 
         # 提取生成的图片和文字反馈
         text_response = None
@@ -1793,7 +1988,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
     remixed_layer = ir_manager.get_remixed_layer()
     storyboard = []
     identity_anchors = {}
-    is_using_original = False
+    is_replication = ir_manager.ir.get("userIntent", {}).get("parsedIntent", {}).get("isReplication", False)
 
     # 创建 concrete shots 查找字典（用于 fallback）
     concrete_shots_lookup = {}
@@ -1827,16 +2022,57 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             # 获取该镜头应用的锚点
             applied_anchors = shot.get("appliedAnchors", {"characters": [], "environments": []})
 
-            # 生成分镜图
-            first_frame_image = generate_storyboard_frame(
-                job_dir=job_dir,
-                job_id=job_id,
-                shot_id=shot_id,
-                t2i_prompt=t2i_prompt,
-                applied_anchors=applied_anchors,
-                identity_anchors=identity_anchors,
-                visual_style=visual_style
-            )
+            # 获取 watermarkInfo（从原始 concrete shot）
+            original_shot = concrete_shots_lookup.get(shot_id, {})
+            shot_watermark_info = original_shot.get("watermarkInfo")
+
+            # Fast-path: 非叙事镜头（图形场景）→ 直接用用户上传的环境图，跳过 Gemini
+            # 同时检查 isNarrative 和 contentClass，防止分类不一致
+            content_class = original_shot.get("contentClass", "")
+            is_narrative = original_shot.get("isNarrative", True) and content_class not in ("BRAND_SPLASH", "ENDCARD")
+            first_frame_image = None
+            if not is_narrative:
+                env_ids_for_shot = applied_anchors.get("environments", [])
+                for env in identity_anchors.get("environments", []):
+                    if env.get("anchorId") in env_ids_for_shot:
+                        tv = env.get("threeViews", {})
+                        for view_type in ["wide", "detail", "alt"]:
+                            view_path = tv.get(view_type)
+                            if view_path:
+                                # Resolve relative path
+                                full_path = view_path if os.path.isabs(view_path) else str(job_dir / view_path.replace(f"jobs/{job_id}/", "")) if view_path.startswith("jobs/") else str(job_dir / "assets" / view_path)
+                                if os.path.exists(full_path):
+                                    # Copy to storyboard location
+                                    storyboard_dir = job_dir / "storyboard"
+                                    storyboard_dir.mkdir(parents=True, exist_ok=True)
+                                    dst = storyboard_dir / f"{shot_id}.png"
+                                    import shutil
+                                    shutil.copy2(full_path, str(dst))
+                                    first_frame_image = f"/assets/{job_id}/storyboard/{shot_id}.png"
+                                    print(f"   🎨 [Storyboard] {shot_id}: graphic scene — using uploaded env image directly")
+                                    break
+                        if first_frame_image:
+                            break
+                if not first_frame_image:
+                    # 无用户上传图 → 用原始帧
+                    frame_path = job_dir / "frames" / f"{shot_id}.png"
+                    if frame_path.exists():
+                        first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
+                        print(f"   ⏭️ [Storyboard] {shot_id}: graphic scene — no replacement uploaded, using original")
+
+            if first_frame_image is None:
+                # 叙事镜头：走 Gemini 生成
+                first_frame_image = generate_storyboard_frame(
+                    job_dir=job_dir,
+                    job_id=job_id,
+                    shot_id=shot_id,
+                    t2i_prompt=t2i_prompt,
+                    applied_anchors=applied_anchors,
+                    identity_anchors=identity_anchors,
+                    visual_style=visual_style,
+                    watermark_info=shot_watermark_info,
+                    is_replication=is_replication
+                )
 
             # 如果生成失败，回退到原始帧
             if not first_frame_image:
@@ -1853,16 +2089,52 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             original_audio = original_shot.get("audio", {})
 
             # 构建视觉描述
-            visual_desc = shot.get("I2V_VideoGen", "") or t2i_prompt
+            # 图形场景：优先用 identity anchor 的最新描述（用户上传图后 vision 自动生成的）
+            visual_desc = None
+            graphic_full_desc = None  # 图形场景的完整描述（用于 contentDescription）
+            if not is_narrative:
+                # Strategy 1: Match by appliedAnchors.environments → identity anchor
+                env_ids_for_desc = applied_anchors.get("environments", [])
+                for env in identity_anchors.get("environments", []):
+                    if env.get("anchorId") in env_ids_for_desc:
+                        graphic_full_desc = env.get("detailedDescription") or env.get("description", "")
+                        break
 
-            # 添加 visual style 信息
-            style_notes = []
-            if visual_style.get("artStyle"):
-                style_notes.append(f"Style: {visual_style['artStyle']}")
-            if visual_style.get("lightingMood"):
-                style_notes.append(f"Lighting: {visual_style['lightingMood']}")
-            if style_notes:
-                visual_desc += f" [{', '.join(style_notes)}]"
+                # Strategy 2: Search environment ledger by shot ID → find matching identity anchor
+                if not graphic_full_desc:
+                    narrative_template = ir_manager.ir.get("pillars", {}).get("II_narrativeTemplate", {})
+                    env_ledger = narrative_template.get("environmentLedger", [])
+                    for ledger_env in env_ledger:
+                        if shot_id in ledger_env.get("appearsInShots", []):
+                            ledger_env_id = ledger_env.get("entityId", "")
+                            # Try to find the identity anchor with matching anchorId
+                            for env in identity_anchors.get("environments", []):
+                                if env.get("anchorId") == ledger_env_id:
+                                    graphic_full_desc = env.get("detailedDescription") or env.get("description", "")
+                                    break
+                            # Fallback: use ledger description directly
+                            if not graphic_full_desc:
+                                graphic_full_desc = ledger_env.get("detailedDescription") or ledger_env.get("visualSignature", "")
+                            break
+
+                if graphic_full_desc:
+                    # frame_description = simplified (first sentence)
+                    first_sentence = graphic_full_desc.split(". ")[0]
+                    visual_desc = (first_sentence + ".") if first_sentence != graphic_full_desc else graphic_full_desc
+                    print(f"   📝 [Storyboard] {shot_id}: graphic desc from anchor: {graphic_full_desc[:60]}...")
+
+            if not visual_desc:
+                visual_desc = shot.get("I2V_VideoGen", "") or t2i_prompt
+
+            # 添加 visual style 信息（仅叙事镜头）
+            if is_narrative:
+                style_notes = []
+                if visual_style.get("artStyle"):
+                    style_notes.append(f"Style: {visual_style['artStyle']}")
+                if visual_style.get("lightingMood"):
+                    style_notes.append(f"Lighting: {visual_style['lightingMood']}")
+                if style_notes:
+                    visual_desc += f" [{', '.join(style_notes)}]"
 
             # 计算时长（优先 remix，fallback 到 original）
             duration = shot.get("durationSeconds") or original_shot.get("durationSeconds", 3.0)
@@ -1890,7 +2162,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                 "shotId": shot_id,
                 "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
-                "contentDescription": shot.get("remixNotes", "") or shot.get("beatTag", "") or original_shot.get("beatTag", ""),
+                "contentDescription": (graphic_full_desc or visual_desc) if not is_narrative else (shot.get("remixNotes", "") or shot.get("beatTag", "") or original_shot.get("beatTag", "")),
                 "startSeconds": 0,
                 "endSeconds": 0,
                 "durationSeconds": duration,
@@ -1914,7 +2186,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
 
     elif concrete_shots:
         # ===== Fallback: 使用原始视频分析数据并生成新的分镜图 =====
-        is_using_original = True
+        is_replication = True
         print(f"📋 [Storyboard] No remixedLayer, generating from original analysis ({len(concrete_shots)} shots)")
 
         for idx, shot in enumerate(concrete_shots):
@@ -1931,7 +2203,8 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                 t2i_prompt=t2i_prompt,
                 applied_anchors={"characters": [], "environments": []},
                 identity_anchors={},
-                visual_style=visual_style
+                visual_style=visual_style,
+                watermark_info=shot.get("watermarkInfo")
             )
 
             # 如果生成失败，回退到原始帧
@@ -1941,18 +2214,42 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                     first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
 
             # 从原始数据构建视觉描述
-            visual_desc = shot.get("visualDescription", "") or shot.get("firstFrameDescription", "")
+            # 图形场景：优先用 identity anchor 的最新描述
+            visual_desc = None
+            graphic_full_desc = None
+            if not shot.get("isNarrative", True):
+                # Search identity anchors via environment ledger → shot mapping
+                narrative_template = ir_manager.ir.get("pillars", {}).get("II_narrativeTemplate", {})
+                env_ledger = narrative_template.get("environmentLedger", [])
+                fallback_anchors = render_strategy.get("identityAnchors", {})
+                for ledger_env in env_ledger:
+                    if shot_id in ledger_env.get("appearsInShots", []):
+                        ledger_env_id = ledger_env.get("entityId", "")
+                        for env in fallback_anchors.get("environments", []):
+                            if env.get("anchorId") == ledger_env_id:
+                                graphic_full_desc = env.get("detailedDescription") or env.get("description", "")
+                                break
+                        if not graphic_full_desc:
+                            graphic_full_desc = ledger_env.get("detailedDescription") or ledger_env.get("visualSignature", "")
+                        break
+                if graphic_full_desc:
+                    first_sentence = graphic_full_desc.split(". ")[0]
+                    visual_desc = (first_sentence + ".") if first_sentence != graphic_full_desc else graphic_full_desc
+
+            if not visual_desc:
+                visual_desc = shot.get("visualDescription", "") or shot.get("firstFrameDescription", "")
             if not visual_desc:
                 visual_desc = f"Shot {idx + 1}"
 
-            # 添加 visual style
-            style_notes = []
-            if visual_style.get("artStyle"):
-                style_notes.append(f"Style: {visual_style['artStyle']}")
-            if visual_style.get("lightingMood"):
-                style_notes.append(f"Lighting: {visual_style['lightingMood']}")
-            if style_notes:
-                visual_desc += f" [{', '.join(style_notes)}]"
+            # 添加 visual style（仅叙事镜头）
+            if shot.get("isNarrative", True):
+                style_notes = []
+                if visual_style.get("artStyle"):
+                    style_notes.append(f"Style: {visual_style['artStyle']}")
+                if visual_style.get("lightingMood"):
+                    style_notes.append(f"Lighting: {visual_style['lightingMood']}")
+                if style_notes:
+                    visual_desc += f" [{', '.join(style_notes)}]"
 
             # 计算时长
             start_time = shot.get("startTime", 0)
@@ -1985,7 +2282,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                 "shotId": shot_id,
                 "firstFrameImage": first_frame_with_cache,
                 "visualDescription": visual_desc,
-                "contentDescription": shot.get("subject", "") or shot.get("contentDescription", "") or shot.get("action", ""),
+                "contentDescription": (graphic_full_desc or visual_desc) if not shot.get("isNarrative", True) else (shot.get("subject", "") or shot.get("contentDescription", "") or shot.get("action", "")),
                 "startSeconds": float(start_time),
                 "endSeconds": float(end_time),
                 "durationSeconds": float(duration),
@@ -2012,7 +2309,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
         )
 
     # 重新计算时间轴（仅对 remixed 数据需要）
-    if not is_using_original:
+    if not is_replication:
         current_time = 0
         for shot in storyboard:
             shot["startSeconds"] = current_time
@@ -2025,7 +2322,7 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
         "jobId": job_id,
         "storyboard": storyboard,
         "totalDuration": total_duration,
-        "isUsingOriginal": is_using_original,
+        "isUsingOriginal": is_replication,
         "remixContext": {
             "identityAnchors": identity_anchors,
             "visualStyle": visual_style,
@@ -2975,7 +3272,7 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
                 )
 
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3-flash-preview",
                 contents=[
                     vision_prompt,
                     genai_types.Part.from_bytes(data=img_bytes, mime_type="image/png")

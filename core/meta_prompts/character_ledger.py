@@ -69,6 +69,7 @@ CHARACTER_PRESENCE_AUDIT_PROMPT = """
 2. A character counts as "visible" even if partially shown (edge of frame, blurred, behind another subject, partially occluded).
 3. Look at the ACTUAL IMAGE content, not just the shot label or description text.
 4. When in doubt, mark as VISIBLE. False positives are far less harmful than false negatives.
+5. WATERMARK/LOGO FILTER: Ignore any watermarks, logos, social media UI, channel icons, or brand graphics. These are NOT characters. Only mark HUMAN or ANIMAL subjects as visible.
 
 # Output format — a JSON array with one entry per frame:
 {
@@ -77,6 +78,43 @@ CHARACTER_PRESENCE_AUDIT_PROMPT = """
     {"shotId": "shot_02", "visible": false}
   ]
 }
+
+# Frames to audit:
+"""
+
+# ============================================================
+# Pass 2 (Batch): All-Character Presence Matrix — single API call
+# Replaces per-character sequential audit with O(1) API call
+# ============================================================
+CHARACTER_BATCH_AUDIT_PROMPT = """
+# Role: Eagle-Eyed Casting Auditor
+# Task: You are given a list of characters and a set of frame images from a video.
+# For EACH frame, determine which of the listed characters are PHYSICALLY VISIBLE.
+
+# Characters to track:
+{characters_list}
+
+# CRITICAL RULES:
+1. Check EVERY frame INDEPENDENTLY. Do NOT assume content is the same as previous frames.
+2. A character counts as "visible" even if partially shown (edge of frame, blurred, behind another subject, partially occluded).
+3. Look at the ACTUAL IMAGE content, not just the shot label or description text.
+4. When in doubt, mark as VISIBLE. False positives are far less harmful than false negatives.
+5. WATERMARK/LOGO FILTER: Ignore any watermarks, logos, social media UI, channel icons, or brand graphics. These are NOT characters. Only mark HUMAN or ANIMAL subjects as visible.
+6. You MUST output an entry for EVERY shot ID listed below, even if no characters are present (use empty array).
+
+# Output format (strict JSON):
+{{
+  "auditMatrix": [
+    {{
+      "shotId": "shot_01",
+      "presentCharacterIds": ["orig_char_01", "orig_char_02"]
+    }},
+    {{
+      "shotId": "shot_02",
+      "presentCharacterIds": []
+    }}
+  ]
+}}
 
 # Frames to audit:
 """
@@ -331,6 +369,7 @@ SURGICAL_RECHECK_PROMPT = """
 
 # Rules:
 - Look ONLY at the image. Ignore any text overlays or watermarks.
+- WATERMARK/LOGO FILTER: Watermarks, logos, channel icons, and brand graphics are NOT characters. Only look for HUMAN or ANIMAL subjects.
 - "Visible" includes: partially shown, edge of frame, blurred, behind objects.
 - Answer with ONLY a JSON object: {{"visible": true}} or {{"visible": false}}
 """
@@ -390,8 +429,8 @@ def process_ledger_result(ai_output: Dict[str, Any], all_shot_ids: List[str] = N
             "shotCount": len(env.get("appearsInShots", []))
         }
 
-        # 确保 entityId 格式正确
-        if not normalized["entityId"].startswith("orig_env_"):
+        # 确保 entityId 格式正确（保留 env_graphic_ 前缀用于图形场景）
+        if not normalized["entityId"].startswith("orig_env_") and not normalized["entityId"].startswith("env_graphic_"):
             normalized["entityId"] = f"orig_env_{len(environment_ledger) + 1:02d}"
 
         environment_ledger.append(normalized)

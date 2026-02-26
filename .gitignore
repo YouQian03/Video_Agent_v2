@@ -15,3 +15,13 @@ frames/
 stylized_frames/
 all_code.txt
 repomix-output.xml
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+
+# Jobs data
+jobs/
