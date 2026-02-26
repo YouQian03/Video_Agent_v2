@@ -303,6 +303,9 @@ class ShotAudio(TypedDict):
 class ShotRecipeItem(TypedDict):
     """单个分镜配方 - 核心字段"""
     shotId: str
+    contentClass: Optional[str]  # NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD
+    isNarrative: bool  # True for NARRATIVE/OVERLAY_CONTENT, False for BRAND_SPLASH/ENDCARD
+    cleaningStatus: Optional[str]  # PENDING | CLEANED | SKIPPED | FAILED
     beatTag: str  # HOOK/SETUP/CATALYST/RISING/TURN/CLIMAX/FALLING/RESOLUTION
     startTime: str
     endTime: str
@@ -320,7 +323,7 @@ class ShotRecipeItem(TypedDict):
     audio: ShotAudio  # 声音/BGM/对白
     style: str  # 视觉风格与质感
     negative: str  # 负面约束
-    watermarkInfo: Optional[Dict]  # 水印/Logo 检测信息 (hasWatermark, description, occludesSubject, occludedArea)
+    watermarkInfo: Optional[Dict]  # 水印/Logo 检测信息 (hasWatermark, type: channel_watermark|brand_logo|endcard|none, description, occludesSubject, occludedArea)
 
     # 资产路径
     assets: Dict[str, Optional[str]]
@@ -764,7 +767,8 @@ def create_empty_film_ir(job_id: str, source_video: str = "") -> Dict[str, Any]:
             "IV_renderStrategy": {
                 "identityAnchors": {
                     "characters": [],
-                    "environments": []
+                    "environments": [],
+                    "products": []
                 },
                 "modelConfig": {
                     "imageModel": "imagen-4.0",

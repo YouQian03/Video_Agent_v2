@@ -91,6 +91,7 @@ import {
   getProductState,
   type VisualStyleConfig,
   type ProductAnchor,
+  getAssetUrl,
 } from "@/lib/api"
 
 // Character/Environment Entity from Character Ledger (Video Analysis)
@@ -1229,6 +1230,7 @@ function CharacterCard({
                   src={originalShotImage}
                   alt={`Original shot of ${character.name}`}
                   className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).innerHTML = '<div class="w-full h-full flex items-center justify-center text-muted-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>' }}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-muted-foreground">
@@ -1468,6 +1470,7 @@ function SceneCard({
                   src={originalShotImage}
                   alt={`Original shot of ${scene.name}`}
                   className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).innerHTML = '<div class="w-full h-full flex items-center justify-center text-muted-foreground"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>' }}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-muted-foreground">
@@ -1637,7 +1640,8 @@ export function CharacterSceneViews({
       }
     }
 
-    return undefined
+    // Fallback: construct URL directly from shot ID (handles storyboard cache miss)
+    return getAssetUrl(jobId, `frames/${firstShotId}.png`)
   }
 
   // Sound Design State

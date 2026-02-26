@@ -336,16 +336,7 @@ class WorkflowManager:
                 # 🎯 关键：Film IR 分析完成后，根据 representativeTimestamp 重新提取帧
                 video_path = self.job_dir / "input.mp4"
                 self._reextract_frames_from_film_ir(video_path)
-
-                # 🧹 Cleaning Pass: Remove watermarks from extracted frames
-                try:
-                    from core.watermark_cleaner import clean_frames
-                    cleaning_ir = load_film_ir(self.job_dir)
-                    cleaning_shots = cleaning_ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
-                    cleaning_stats = clean_frames(self.job_dir, cleaning_shots)
-                    print(f"🧹 [Cleaning Pass] {cleaning_stats}")
-                except Exception as cleaning_err:
-                    print(f"⚠️ [Cleaning Pass] Failed: {cleaning_err}, using original frames")
+                # Note: Watermark cleaning now runs asynchronously after upload completes (see app.py)
             else:
                 print(f"⚠️ [Film IR] Story Theme analysis: {result.get('reason', 'unknown error')}")
         except Exception as e:
