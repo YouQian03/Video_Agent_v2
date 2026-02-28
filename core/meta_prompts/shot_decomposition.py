@@ -83,6 +83,7 @@ SHOT_DECOMPOSITION_PROMPT = """
       {
         "shotId": "shot_01",
         "contentClass": "NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD",
+        "visualPersistence": "PURE_STATIC | STATIC_SOURCE_DYNAMIC_VIEW | NATIVE_VIDEO",
         "isNarrative": true,
         "beatTag": "HOOK | SETUP | CATALYST | RISING | TURN | CLIMAX | FALLING | RESOLUTION",
         "startTime": "00:00:00.000",
@@ -161,6 +162,19 @@ SHOT_DECOMPOSITION_PROMPT = """
 - ALWAYS include baseline artifacts: `"blurry, extra limbs, malformed hands, text, watermark"`
 - Add shot-specific exclusions based on content (e.g., for close-up: `"visible pores exaggerated, skin smoothing"`)
 - For stylized content, exclude conflicting styles (e.g., `"photorealistic"` for animation)
+
+### Visual Persistence Classification
+Classify each shot's motion type into `visualPersistence`:
+- `PURE_STATIC` — The entire shot is a single frozen image with NO motion of any kind: no camera movement, no subject motion, no animated elements. Common examples: title cards, text screens, product photos, graphic cards, freeze frames, static brand screens.
+- `STATIC_SOURCE_DYNAMIC_VIEW` — The source content is a still image (no subject movement), but there IS virtual camera motion such as slow zoom (Ken Burns effect), pan across a photo, or parallax shift. The subject itself does not move.
+- `NATIVE_VIDEO` — Standard video footage with real motion: moving subjects, live action, animated characters, or any temporal change in subject state.
+
+Classification rules:
+- If the shot contains ONLY text, logos, or a single unchanging graphic → PURE_STATIC
+- If a photograph or artwork is shown with a slow push-in or pan → STATIC_SOURCE_DYNAMIC_VIEW
+- If any living subject moves, speaks, or changes expression → NATIVE_VIDEO
+- When in doubt between PURE_STATIC and STATIC_SOURCE_DYNAMIC_VIEW, prefer PURE_STATIC
+- BRAND_SPLASH and ENDCARD shots are almost always PURE_STATIC unless they have animated transitions
 
 ### Shot Content Classification (MANDATORY — evaluate BEFORE detailed analysis)
 Classify each shot's primary content type into `contentClass`:
@@ -311,6 +325,7 @@ def convert_to_frontend_format(ai_output: dict) -> dict:
         shot_data = {
             "shotId": shot.get("shotId"),
             "contentClass": shot.get("contentClass", "NARRATIVE"),
+            "visualPersistence": shot.get("visualPersistence", "NATIVE_VIDEO"),
             "isNarrative": shot.get("isNarrative", True),
             "beatTag": shot.get("beatTag"),
             "startTime": shot.get("startTime"),
@@ -565,6 +580,7 @@ Rules:
     {
       "shotId": "shot_XX",
       "contentClass": "NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD",
+      "visualPersistence": "PURE_STATIC | STATIC_SOURCE_DYNAMIC_VIEW | NATIVE_VIDEO",
       "isNarrative": true,
       "concrete": {
         "firstFrameDescription": "CRITICAL: 50-80 word exact static composition of frame 1. Include: subject pose, facial expression, gaze direction, hand positions, body orientation, background elements, clothing details.",
@@ -776,6 +792,7 @@ def merge_batch_results(
             merged_shot = {
                 "shotId": shot_id,
                 "contentClass": detailed.get("contentClass", "NARRATIVE"),
+                "visualPersistence": detailed.get("visualPersistence", ""),
                 "isNarrative": detailed.get("isNarrative", True),
                 "beatTag": basic_shot.get("beatTag"),
                 "startTime": basic_shot.get("startTime"),
@@ -901,3 +918,11 @@ def _enforce_branding_classification(shots: List[Dict[str, Any]]) -> None:
             shot["isNarrative"] = False
         elif "isNarrative" not in shot:
             shot["isNarrative"] = shot["contentClass"] in ("NARRATIVE", "OVERLAY_CONTENT")
+
+    # --- Phase C: fill missing visualPersistence defaults ---
+    for shot in shots:
+        if not shot.get("visualPersistence"):
+            if shot.get("contentClass") in ("BRAND_SPLASH", "ENDCARD"):
+                shot["visualPersistence"] = "PURE_STATIC"
+            else:
+                shot["visualPersistence"] = "NATIVE_VIDEO"

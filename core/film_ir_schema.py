@@ -304,6 +304,7 @@ class ShotRecipeItem(TypedDict):
     """单个分镜配方 - 核心字段"""
     shotId: str
     contentClass: Optional[str]  # NARRATIVE | BRAND_SPLASH | OVERLAY_CONTENT | ENDCARD
+    visualPersistence: Optional[str]  # PURE_STATIC | STATIC_SOURCE_DYNAMIC_VIEW | NATIVE_VIDEO
     isNarrative: bool  # True for NARRATIVE/OVERLAY_CONTENT, False for BRAND_SPLASH/ENDCARD
     cleaningStatus: Optional[str]  # PENDING | CLEANED | SKIPPED | FAILED
     beatTag: str  # HOOK/SETUP/CATALYST/RISING/TURN/CLIMAX/FALLING/RESOLUTION

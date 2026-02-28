@@ -751,6 +751,25 @@ async def run_task(node_type: str, background_tasks: BackgroundTasks, shot_id: O
 # 串行批量视频生成 API (防止 Veo RPM 限流)
 # ============================================================
 
+def _get_visual_persistence(job_dir: Path, shot_id: str) -> str:
+    """
+    从 film_ir.json 的 concrete shots 读取 visualPersistence，fallback 到 NATIVE_VIDEO。
+    """
+    try:
+        import json
+        film_ir_path = job_dir / "film_ir.json"
+        if film_ir_path.exists():
+            with open(film_ir_path, 'r', encoding='utf-8') as f:
+                ir = json.load(f)
+            concrete_shots = ir.get("pillars", {}).get("III_shotRecipe", {}).get("concrete", {}).get("shots", [])
+            for cs in concrete_shots:
+                if cs.get("shotId") == shot_id:
+                    return cs.get("visualPersistence", "NATIVE_VIDEO")
+    except Exception as e:
+        print(f"⚠️ [VisualPersistence] Error reading for {shot_id}: {e}")
+    return "NATIVE_VIDEO"
+
+
 def _run_batch_video_generation_serial(job_id: str):
     """
     串行执行所有 shot 的视频生成，带冷却间隔和随机抖动
@@ -763,7 +782,7 @@ def _run_batch_video_generation_serial(job_id: str):
     """
     import time
     import random
-    from core.runner import veo_generate_video, seedance_generate_video, save_workflow, load_workflow
+    from core.runner import veo_generate_video, seedance_generate_video, ffmpeg_static_video, save_workflow, load_workflow
 
     job_dir = Path("jobs") / job_id
     wf = load_workflow(job_dir)
@@ -810,16 +829,26 @@ def _run_batch_video_generation_serial(job_id: str):
         save_workflow(job_dir, wf)
 
         try:
-            video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
+            # 读取 visualPersistence 进行分流
+            visual_persistence = _get_visual_persistence(job_dir, shot_id)
 
-            if video_model == "veo":
-                rel_video_path = veo_generate_video(job_dir, wf, shot)
-            elif video_model == "seedance":
-                rel_video_path = seedance_generate_video(job_dir, wf, shot)
+            if visual_persistence == "PURE_STATIC":
+                # 静态画面：ffmpeg 直出，不走 API
+                duration = shot.get("duration") or shot.get("durationSeconds") or 4.0
+                rel_video_path = ffmpeg_static_video(job_dir, shot, duration)
+                print(f"🖼️ [Static] {shot_id}: ffmpeg static video ({duration}s)")
             else:
-                # Mock 模式快速测试
-                from core.runner import mock_generate_video
-                rel_video_path = mock_generate_video(job_dir, shot)
+                # 动态画面：正常走 Seedance/Veo
+                video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
+
+                if video_model == "veo":
+                    rel_video_path = veo_generate_video(job_dir, wf, shot)
+                elif video_model == "seedance":
+                    rel_video_path = seedance_generate_video(job_dir, wf, shot, visual_persistence)
+                else:
+                    # Mock 模式快速测试
+                    from core.runner import mock_generate_video
+                    rel_video_path = mock_generate_video(job_dir, shot)
 
             shot.setdefault("assets", {})["video"] = rel_video_path
             shot["status"]["video_generate"] = "SUCCESS"
@@ -2042,13 +2071,13 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
                                 # Resolve relative path
                                 full_path = view_path if os.path.isabs(view_path) else str(job_dir / view_path.replace(f"jobs/{job_id}/", "")) if view_path.startswith("jobs/") else str(job_dir / "assets" / view_path)
                                 if os.path.exists(full_path):
-                                    # Copy to storyboard location
-                                    storyboard_dir = job_dir / "storyboard"
+                                    # Copy to storyboard_frames (same dir as Gemini-generated frames)
+                                    storyboard_dir = job_dir / "storyboard_frames"
                                     storyboard_dir.mkdir(parents=True, exist_ok=True)
                                     dst = storyboard_dir / f"{shot_id}.png"
                                     import shutil
                                     shutil.copy2(full_path, str(dst))
-                                    first_frame_image = f"/assets/{job_id}/storyboard/{shot_id}.png"
+                                    first_frame_image = f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
                                     print(f"   🎨 [Storyboard] {shot_id}: graphic scene — using uploaded env image directly")
                                     break
                         if first_frame_image:
@@ -2719,13 +2748,20 @@ async def finalize_storyboard(job_id: str, request: FinalizeStoryboardRequest):
             dialogue_text = original_audio.get("dialogueText", "") or ""
             dialogue_voice = original_audio.get("dialogue", "") or ""
 
+            # 计算 duration
+            start_time = shot.get("startTime", 0)
+            end_time = shot.get("endTime", 0)
+            duration = shot.get("durationSeconds") or (end_time - start_time if end_time > start_time else 0) or 4.0
+
             workflow_shots.append({
                 "shot_id": shot_id,
                 "frame_description": shot.get("visualDescription", ""),
                 "content_analysis": shot.get("contentDescription", ""),
                 "description": shot.get("I2V_VideoGen", "") or shot.get("visualDescription", ""),
-                "start_time": shot.get("startTime", 0),
-                "end_time": shot.get("endTime", 0),
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration": duration,
+                "visual_persistence": original_shot.get("visualPersistence", "NATIVE_VIDEO"),
                 "assets": {
                     "first_frame": f"frames/{shot_id}.png",
                     "storyboard_frame": f"storyboard_frames/{shot_id}.png",

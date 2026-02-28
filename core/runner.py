@@ -99,7 +99,7 @@ def get_remix_shot_data(job_dir: Path, shot_id: str, force_reload: bool = True) 
         return None, None, None
 
 
-def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style: Dict) -> str:
+def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style: Dict, visual_persistence: str = "NATIVE_VIDEO") -> str:
     """
     🎨 构建基于 Remix 数据的生成 Prompt（增强版）
 
@@ -183,8 +183,8 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     if action_description:
         final_parts.append(f"[SPECIFIC ACTION]: {action_description}")
 
-    # 3. 摄影机运动
-    if camera_movement and camera_movement.lower() != "static":
+    # 3. 摄影机运动 (skip for non-NATIVE_VIDEO to avoid injecting motion into static shots)
+    if camera_movement and camera_movement.lower() != "static" and visual_persistence == "NATIVE_VIDEO":
         final_parts.append(f"[CAMERA MOVEMENT]: {camera_movement}")
 
     # 4. Identity anchors
@@ -197,11 +197,18 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
         final_parts.append(f"[VISUAL STYLE]: {', '.join(style_parts)}")
 
     # 6. 🔗 语义桥梁 - Google 生态技巧，确保 Veo 参考第0帧
-    semantic_bridge = (
-        "CRITICAL: Maintaining consistent lighting, character appearance, and fine details "
-        "from the provided reference image. The first frame must match the reference exactly, "
-        "with natural motion flowing from that starting point."
-    )
+    if visual_persistence == "NATIVE_VIDEO":
+        semantic_bridge = (
+            "CRITICAL: Maintaining consistent lighting, character appearance, and fine details "
+            "from the provided reference image. The first frame must match the reference exactly, "
+            "with natural motion flowing from that starting point."
+        )
+    else:
+        semantic_bridge = (
+            "CRITICAL: Maintaining consistent lighting and fine details "
+            "from the provided reference image. The first frame must match the reference exactly. "
+            "Subject remains perfectly still."
+        )
     final_parts.append(f"[CONSISTENCY]: {semantic_bridge}")
 
     # 7. Negative constraints
@@ -210,7 +217,7 @@ def build_remix_prompt(remixed_shot: Dict, identity_anchors: Dict, visual_style:
     return "\n\n".join(final_parts)
 
 
-def get_effective_shot_data(job_dir: Path, wf: dict, shot: dict) -> Tuple[str, dict]:
+def get_effective_shot_data(job_dir: Path, wf: dict, shot: dict, visual_persistence: str = "NATIVE_VIDEO") -> Tuple[str, dict]:
     """
     🎯 获取有效的分镜数据（优先使用 Remix 数据）
 
@@ -229,7 +236,7 @@ def get_effective_shot_data(job_dir: Path, wf: dict, shot: dict) -> Tuple[str, d
 
     if remixed_shot:
         # 使用 remix 数据
-        effective_prompt = build_remix_prompt(remixed_shot, identity_anchors, visual_style)
+        effective_prompt = build_remix_prompt(remixed_shot, identity_anchors, visual_style, visual_persistence)
 
         # 获取摄影参数 - 优先使用 remixed 的 camera 数据
         camera_data = remixed_shot.get("camera", {})
@@ -430,6 +437,43 @@ FORBIDDEN:
     print("⚠️ 执行原图占位。")
     shutil.copyfile(src, dst)
     return f"stylized_frames/{dst.name}"
+
+
+def ffmpeg_static_video(job_dir: Path, shot: dict, duration: float = 4.0) -> str:
+    """
+    PURE_STATIC 镜头：用 ffmpeg 将单张图直接转为静态视频。
+    零 API 成本，100% 画面稳定，耗时 <1s。
+    """
+    shot_id = shot["shot_id"]
+    videos_dir = ensure_videos_dir(job_dir)
+    out_path = videos_dir / f"{shot_id}.mp4"
+
+    # 图片来源优先级同 seedance: storyboard_frames > stylized_frames > frames
+    img_path = None
+    for subdir in ["storyboard_frames", "stylized_frames", "frames"]:
+        candidate = job_dir / subdir / f"{shot_id}.png"
+        if candidate.exists():
+            img_path = candidate
+            break
+    if not img_path:
+        raise RuntimeError(f"No frame found for static shot {shot_id}")
+
+    ffmpeg = get_ffmpeg_path()
+    cmd = [
+        ffmpeg, "-y",
+        "-loop", "1",
+        "-i", str(img_path),
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-tune", "stillimage",
+        "-pix_fmt", "yuv420p",
+        "-r", "24",
+        str(out_path)
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg static video failed: {result.stderr[:200]}")
+    return f"videos/{shot_id}.mp4"
 
 
 def mock_generate_video(job_dir: Path, shot: dict) -> str:
@@ -683,7 +727,7 @@ high motion quality, cinematic, professional cinematography"""
     raise RuntimeError(f"Veo 生成失败：已重试 {max_retries} 次")
 
 
-def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
+def seedance_generate_video(job_dir: Path, wf: dict, shot: dict, visual_persistence: str = "NATIVE_VIDEO") -> str:
     """
     使用 Seedance 1.5 Pro API 生成视频
 
@@ -760,7 +804,7 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
         print(f"🌐 [Seedance] Image URL: {image_url}")
 
     # 获取 prompt
-    description, cinema = get_effective_shot_data(job_dir, wf, shot)
+    description, cinema = get_effective_shot_data(job_dir, wf, shot, visual_persistence)
     style = wf.get('global', {}).get('style_prompt', '')
 
     # 🎤 从 Film IR concrete shots 读取完整的对白数据（声线描述 + 台词文本）
@@ -807,11 +851,17 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
                 dialogue_block = f'The character says: "{dialogue_text}"'
 
         # 🎯 关键：台词嵌入场景描述，不作为独立段落
-        prompt = f'{description}\n{dialogue_block}\nStyle: {style}. Cinematic, high quality, smooth motion.'
+        if visual_persistence == "STATIC_SOURCE_DYNAMIC_VIEW":
+            prompt = f'{description}\n{dialogue_block}\nStyle: {style}. Cinematic, high quality, minimal movement, subject remains perfectly still.'
+        else:
+            prompt = f'{description}\n{dialogue_block}\nStyle: {style}. Cinematic, high quality, smooth motion.'
         print(f"🎤 [Seedance] Dialogue ({'Chinese' if has_chinese else 'English'}): {dialogue_text[:60]}...")
         print(f"🎤 [Seedance] Voice desc: {dialogue_voice_desc[:80]}")
     else:
-        prompt = f'{description}\nStyle: {style}. Cinematic, high quality, smooth motion.'
+        if visual_persistence == "STATIC_SOURCE_DYNAMIC_VIEW":
+            prompt = f'{description}\nStyle: {style}. Cinematic, high quality, minimal movement, subject remains perfectly still.'
+        else:
+            prompt = f'{description}\nStyle: {style}. Cinematic, high quality, smooth motion.'
 
     if len(prompt) > 2000:
         prompt = prompt[:2000]
@@ -1009,13 +1059,20 @@ def run_video_generate(job_dir: Path, wf: dict, target_shot: str | None = None) 
         shot.setdefault("status", {})["video_generate"] = "RUNNING"
         save_workflow(job_dir, wf)
         try:
-            video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
-            if video_model == "veo":
-                rel_video_path = veo_generate_video(job_dir, wf, shot)
-            elif video_model == "seedance":
-                rel_video_path = seedance_generate_video(job_dir, wf, shot)
+            visual_persistence = shot.get("visual_persistence", "NATIVE_VIDEO")
+
+            if visual_persistence == "PURE_STATIC":
+                duration = shot.get("duration") or shot.get("durationSeconds") or 4.0
+                rel_video_path = ffmpeg_static_video(job_dir, shot, duration)
+                print(f"🖼️ [Static] {sid}: ffmpeg static video ({duration}s)")
             else:
-                rel_video_path = mock_generate_video(job_dir, shot)
+                video_model = wf.get("global", {}).get("video_model", "seedance")  # 默认使用 Seedance
+                if video_model == "veo":
+                    rel_video_path = veo_generate_video(job_dir, wf, shot)
+                elif video_model == "seedance":
+                    rel_video_path = seedance_generate_video(job_dir, wf, shot, visual_persistence)
+                else:
+                    rel_video_path = mock_generate_video(job_dir, shot)
             shot.setdefault("assets", {})["video"] = rel_video_path
             shot["status"]["video_generate"] = "SUCCESS"
             print(f"✅ Video SUCCESS: {sid}")
