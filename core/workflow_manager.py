@@ -435,11 +435,8 @@ class WorkflowManager:
 
     def _run_gemini_analysis(self, video_path: Path):
         from google.genai import types
-        api_key = os.getenv("GEMINI_API_KEY")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        if api_key:
-            api_key = api_key.strip()
-            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
         client = genai.Client(api_key=api_key)
         uploaded = client.files.upload(file=str(video_path))
         video_file = wait_until_file_active(client, uploaded)
@@ -1428,9 +1425,14 @@ class WorkflowManager:
         return None
 
     def merge_videos(self) -> str:
-        """执行无损合并"""
+        """执行无损合并（跳过非叙事镜头）"""
         ffmpeg_path = get_ffmpeg_path()
-        success_shots = [s for s in self.workflow.get("shots", []) if s["status"].get("video_generate") == "SUCCESS"]
+        success_shots = [
+            s for s in self.workflow.get("shots", [])
+            if s["status"].get("video_generate") == "SUCCESS"
+            and s.get("isNarrative", True)
+            and s.get("contentClass", "NARRATIVE") not in ("BRAND_SPLASH", "ENDCARD")
+        ]
         if not success_shots: raise RuntimeError("没有可合并的分镜视频。")
         success_shots.sort(key=lambda x: x["shot_id"])
         concat_list_path = self.job_dir / "concat_list.txt"

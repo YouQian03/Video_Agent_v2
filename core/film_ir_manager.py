@@ -497,12 +497,8 @@ class FilmIRManager:
         """
         import time
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
 
         client = genai.Client(api_key=api_key)
 
@@ -1695,12 +1691,8 @@ class FilmIRManager:
         Returns:
             ParsedIntent 结构（包含 originalEntityId 字段）
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
 
         client = genai.Client(api_key=api_key)
 
@@ -1812,12 +1804,8 @@ class FilmIRManager:
         Returns:
             Fusion 结果，包含 remixedIdentityAnchors 和 remixedShots
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not set")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
 
         client = genai.Client(api_key=api_key)
 
@@ -1956,11 +1944,8 @@ class FilmIRManager:
             max_character_anchors: 最多生成几个角色 anchor（默认 50，足够覆盖大多数视频）
             max_environment_anchors: 最多生成几个环境 anchor（默认 20）
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        if api_key:
-            api_key = api_key.strip()
-            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
         client = genai.Client(api_key=api_key)
 
         # 提取原始视频中的独特主体和场景
@@ -2100,11 +2085,8 @@ Output ONLY valid JSON. No markdown, no explanation.
         """
         分批生成 Shot Prompts (T2I + I2V)
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        if api_key:
-            api_key = api_key.strip()
-            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
         client = genai.Client(api_key=api_key)
 
         # 构建镜头信息

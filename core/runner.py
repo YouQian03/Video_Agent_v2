@@ -9,7 +9,7 @@ import io
 from PIL import Image
 
 from .workflow_io import save_workflow, load_workflow
-from .utils import get_ffmpeg_path
+from .utils import get_ffmpeg_path, gemini_keys, seedance_keys
 from .film_ir_io import load_film_ir, film_ir_exists
 from typing import Dict, Any, Optional, Tuple
 
@@ -270,11 +270,7 @@ def ai_stylize_frame(job_dir: Path, wf: dict, shot: dict) -> str:
     from google import genai
     from google.genai import types
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-    if api_key:
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+    api_key = gemini_keys.get()
     client = genai.Client(api_key=api_key, http_options={'api_version': 'v1beta'})
 
     src = job_dir / shot["assets"]["first_frame"]
@@ -491,11 +487,7 @@ def veo_generate_video(job_dir: Path, wf: dict, shot: dict) -> str:
     from google import genai
     from google.genai import types
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-    if api_key:
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+    api_key = gemini_keys.get()
     # 使用与 video_generator.py 相同的客户端初始化方式
     client = genai.Client(api_key=api_key)
 
@@ -711,6 +703,7 @@ high motion quality, cinematic, professional cinematography"""
             is_rate_limit = "429" in error_str or "rate" in error_str or "quota" in error_str or "resource_exhausted" in error_str
 
             if is_rate_limit and attempt < max_retries - 1:
+                gemini_keys.mark_exhausted(api_key, cooldown_secs=60)
                 import random
                 # 🎲 随机抖动：基础等待 + 5-15秒随机延迟，打破同步节奏
                 base_wait = retry_wait_seconds * (attempt + 1)
@@ -738,16 +731,7 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict, visual_persiste
     - 分辨率: 480p/720p
     - generate_audio: 启用 AI 音频生成（voiceover/音效/背景音乐）
     """
-    api_key = os.getenv("SEEDANCE_API_KEY")
-    if not api_key:
-        raise RuntimeError("SEEDANCE_API_KEY 环境变量未设置")
-
-    # 🔧 清理 API Key：移除不可见 Unicode 字符和空白
-    # 这些字符可能在复制粘贴时被意外引入，导致 'latin-1' 编码错误
-    api_key = api_key.strip()
-    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
-    if not api_key:
-        raise RuntimeError("SEEDANCE_API_KEY 清理后为空，请检查是否包含有效字符")
+    api_key = seedance_keys.get()
 
     # 获取公网 BASE_URL（Railway 部署时必须设置）
     base_url = os.getenv("BASE_URL", "").rstrip("/")
@@ -877,14 +861,27 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict, visual_persiste
         "Content-Type": "application/json"
     }
 
+    # ⏱️ 根据原始镜头时长选择 Seedance 支持的最近档位 (4/8/12)
+    original_dur = shot.get("durationSeconds") or shot.get("duration") or 4.0
+    if isinstance(original_dur, str):
+        try: original_dur = float(original_dur)
+        except ValueError: original_dur = 4.0
+    if original_dur <= 6:
+        seedance_duration = "4"
+    elif original_dur <= 10:
+        seedance_duration = "8"
+    else:
+        seedance_duration = "12"
+
     # 🎬 Step 1: 构建请求参数（严格按照 seedanceapi.org 文档）
     generate_payload = {
         "prompt": prompt,
         "aspect_ratio": "16:9",
         "resolution": "720p",
-        "duration": "4",  # "4", "8", or "12"
+        "duration": seedance_duration,
         "generate_audio": enable_audio  # 启用 AI 音频生成
     }
+    print(f"   ⏱️ Original duration: {original_dur:.1f}s → Seedance duration: {seedance_duration}s")
 
     # 如果有公网图片 URL，使用 image-to-video 模式
     if image_url:
@@ -996,6 +993,7 @@ def seedance_generate_video(job_dir: Path, wf: dict, shot: dict, visual_persiste
             is_rate_limit = "429" in error_str or "rate" in error_str or "too many" in error_str
 
             if is_rate_limit and attempt < max_retries - 1:
+                seedance_keys.mark_exhausted(api_key, cooldown_secs=60)
                 import random
                 jitter = random.uniform(5, 15)
                 wait_time = retry_wait * (attempt + 1) + jitter

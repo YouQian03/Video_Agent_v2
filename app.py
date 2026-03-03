@@ -616,8 +616,18 @@ async def get_storyboard_socialsaver(job_id: str):
                     camera = ir_shot.get("camera", {}) if isinstance(ir_shot.get("camera"), dict) else {}
                     audio = ir_shot.get("audio", {}) if isinstance(ir_shot.get("audio"), dict) else {}
 
+                    # 计算原始时长
+                    _start = ir_shot.get("startSeconds", 0) or 0
+                    _end = ir_shot.get("endSeconds", 0) or 0
+                    _dur = ir_shot.get("durationSeconds") or (_end - _start if _end > _start else 4.0)
+
                     converted_shots.append({
                         "shot_id": shot_id,
+                        # 🏷️ 内容分类（用于生成/合并过滤）
+                        "isNarrative": ir_shot.get("isNarrative", True),
+                        "contentClass": ir_shot.get("contentClass", "NARRATIVE"),
+                        # ⏱️ 原始时长（秒）
+                        "durationSeconds": _dur,
                         # 🎬 首帧描述 (Visual Description)
                         "frame_description": ir_shot.get("firstFrameDescription", ""),
                         # 🎬 内容分析 (Content Description)
@@ -625,8 +635,8 @@ async def get_storyboard_socialsaver(job_id: str):
                         # 🎬 场景描述
                         "scene_description": ir_shot.get("scene", ""),
                         "description": ir_shot.get("subject", "") + " " + ir_shot.get("scene", ""),
-                        "start_time": ir_shot.get("startSeconds", 0),
-                        "end_time": ir_shot.get("endSeconds", 0),
+                        "start_time": _start,
+                        "end_time": _end,
                         "assets": {
                             "first_frame": f"frames/{shot_id}.png",
                             "source_video_segment": f"source_segments/{shot_id}.mp4",
@@ -812,6 +822,15 @@ def _run_batch_video_generation_serial(job_id: str):
 
     for idx, shot in enumerate(shots):
         shot_id = shot.get("shot_id")
+
+        # 🏷️ 跳过非叙事镜头（BRAND_SPLASH / ENDCARD）
+        content_class = shot.get("contentClass", "NARRATIVE")
+        is_narrative = shot.get("isNarrative", True)
+        if not is_narrative or content_class in ("BRAND_SPLASH", "ENDCARD"):
+            print(f"⏭️ [Skip] {shot_id}: {content_class} (非叙事镜头，跳过视频生成)")
+            shot.setdefault("status", {})["video_generate"] = "SKIPPED"
+            save_workflow(job_dir, wf)
+            continue
 
         # 🔄 冷却间隔（第一个 shot 除外）
         if idx > 0:
@@ -1606,13 +1625,8 @@ def generate_storyboard_frame(
     try:
         import concurrent.futures
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            print(f"   ❌ GEMINI_API_KEY not set")
-            return ""
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from core.utils import gemini_keys
+        api_key = gemini_keys.get()
 
         client = genai.Client(api_key=api_key)
 
@@ -2382,11 +2396,8 @@ async def storyboard_chat(job_id: str, request: StoryboardChatRequest):
     from google import genai
     from google.genai import types
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-    if api_key:
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+    from core.utils import gemini_keys
+    api_key = gemini_keys.get()
     client = genai.Client(api_key=api_key)
 
     ir_manager = FilmIRManager(job_id)
@@ -3275,50 +3286,48 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
         from PIL import Image
         import io
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key:
-            api_key = api_key.strip()
-            api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
-            client = genai.Client(api_key=api_key)
+        from core.utils import gemini_keys
+        api_key = gemini_keys.get()
+        client = genai.Client(api_key=api_key)
 
-            img = Image.open(file_path)
-            img_bytes_io = io.BytesIO()
-            img.save(img_bytes_io, format="PNG")
-            img_bytes = img_bytes_io.getvalue()
+        img = Image.open(file_path)
+        img_bytes_io = io.BytesIO()
+        img.save(img_bytes_io, format="PNG")
+        img_bytes = img_bytes_io.getvalue()
 
-            is_character = view in ["front", "side", "back"]
-            if is_character:
-                vision_prompt = (
-                    "Describe this character/subject in detail for use as a visual reference. "
-                    "Focus on: species/type, color, texture, clothing, accessories, "
-                    "distinctive features, and overall appearance. "
-                    "Be specific and concise (2-3 sentences). "
-                    "Do NOT include background or scene description. "
-                    "Example: 'A black Labrador dog with a glossy short coat, brown eyes, "
-                    "and a red collar with a silver tag.'"
-                )
-            else:
-                vision_prompt = (
-                    "Describe this scene/environment in detail for use as a visual reference. "
-                    "Focus on: setting type, lighting, colors, atmosphere, key objects, "
-                    "and spatial layout. "
-                    "Be specific and concise (2-3 sentences). "
-                    "Example: 'A cozy coffee shop interior with warm amber lighting, "
-                    "exposed brick walls, and wooden tables.'"
-                )
-
-            response = client.models.generate_content(
-                model="gemini-3-flash-preview",
-                contents=[
-                    vision_prompt,
-                    genai_types.Part.from_bytes(data=img_bytes, mime_type="image/png")
-                ],
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.3,
-                )
+        is_character = view in ["front", "side", "back"]
+        if is_character:
+            vision_prompt = (
+                "Describe this character/subject in detail for use as a visual reference. "
+                "Focus on: species/type, color, texture, clothing, accessories, "
+                "distinctive features, and overall appearance. "
+                "Be specific and concise (2-3 sentences). "
+                "Do NOT include background or scene description. "
+                "Example: 'A black Labrador dog with a glossy short coat, brown eyes, "
+                "and a red collar with a silver tag.'"
             )
-            auto_description = response.text.strip()
-            print(f"   🔍 [Vision] Auto-generated description for {anchor_id}: {auto_description[:100]}...")
+        else:
+            vision_prompt = (
+                "Describe this scene/environment in detail for use as a visual reference. "
+                "Focus on: setting type, lighting, colors, atmosphere, key objects, "
+                "and spatial layout. "
+                "Be specific and concise (2-3 sentences). "
+                "Example: 'A cozy coffee shop interior with warm amber lighting, "
+                "exposed brick walls, and wooden tables.'"
+            )
+
+        response = client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=[
+                vision_prompt,
+                genai_types.Part.from_bytes(data=img_bytes, mime_type="image/png")
+            ],
+            config=genai_types.GenerateContentConfig(
+                temperature=0.3,
+            )
+        )
+        auto_description = response.text.strip()
+        print(f"   🔍 [Vision] Auto-generated description for {anchor_id}: {auto_description[:100]}...")
     except Exception as e:
         print(f"   ⚠️ [Vision] Failed to auto-generate description for {anchor_id}: {e}")
 
@@ -4598,12 +4607,8 @@ async def retry_shot_analysis(job_id: str, request: RetryBatchRequest = None):
         raise HTTPException(status_code=400, detail="Video file not found for retry")
 
     # 初始化 Gemini client
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not set")
-    # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-    api_key = api_key.strip()
-    api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+    from core.utils import gemini_keys
+    api_key = gemini_keys.get()
 
     client = genai.Client(api_key=api_key)
 

@@ -8,12 +8,8 @@ from typing import Dict, Any, List, Union
 
 class AgentEngine:
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("未检测到 GEMINI_API_KEY")
-        # Sanitize API key to remove non-ASCII characters (fixes encoding errors in HTTP headers)
-        api_key = api_key.strip()
-        api_key = ''.join(c for c in api_key if c.isascii() and c.isprintable())
+        from .utils import gemini_keys
+        api_key = gemini_keys.get()
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-3-flash-preview" 
 

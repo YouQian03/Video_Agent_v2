@@ -25,6 +25,7 @@ SHOT_DECOMPOSITION_PROMPT = """
 - **Cut Detection**: Identify exact timestamps where visual cuts occur
 - **Camera Continuity**: Do NOT split continuous camera movements (pan/tilt/dolly/zoom) unless there is a literal cut
 - **Scene Changes**: New location or significant time jump = new shot
+- **Decorative Transition Splitting**: When a sequence shows "static image A → decorative transition effect (page flip, slide, wipe, dissolve, fold, curl, cube rotation, etc.) → static image B", you MUST split this into separate shots: one shot for image A (ending before the transition starts), one shot for the transition itself, and one shot for image B (starting after the transition completes). The transition shot will typically be very short (<1s). Do NOT merge the transition with either static image.
 
 ### Duration Constraints
 - **Minimum**: ≥1.0 second (merge micro-cuts into logical units)
@@ -175,6 +176,8 @@ Classification rules:
 - If any living subject moves, speaks, or changes expression → NATIVE_VIDEO
 - When in doubt between PURE_STATIC and STATIC_SOURCE_DYNAMIC_VIEW, prefer PURE_STATIC
 - BRAND_SPLASH and ENDCARD shots are almost always PURE_STATIC unless they have animated transitions
+- **Decorative transitions** (page flip, slide, wipe, dissolve, fold, curl, cube rotation, swipe, push, or any effect that reveals a new static image): classify as PURE_STATIC. These are short (<1s) transitional effects between two static images — the motion is purely decorative, not narrative content. Use `firstFrameDescription` to describe the final revealed image (the destination), not the mid-transition state.
+- **Photo slideshow / gallery pattern**: If the video is a sequence of still photographs connected by transitions, EVERY photograph shot MUST be PURE_STATIC and EVERY transition shot MUST be PURE_STATIC. Do NOT classify these as NATIVE_VIDEO just because a decorative transition creates brief visual motion.
 
 ### Shot Content Classification (MANDATORY — evaluate BEFORE detailed analysis)
 Classify each shot's primary content type into `contentClass`:
@@ -462,6 +465,13 @@ Do NOT provide detailed descriptions - those will be extracted in Phase 2.
 Internal testing shows your timestamp detection for scene cuts is consistently **1.0-1.5 seconds EARLIER** than the actual visual change.
 To compensate: When outputting `representativeTimestamp`, you MUST manually **ADD 1.0 seconds** to your initial visual estimate to ensure the captured frame belongs to the CORRECT shot.
 
+## Decorative Transition Splitting (IMPORTANT)
+When the video shows "static image → decorative transition (page flip, slide, wipe, dissolve, fold, curl, swipe, push, cube rotation) → static image", split this into SEPARATE shots:
+- Shot for image A (before transition starts)
+- Shot for the transition itself (typically <1s)
+- Shot for image B (after transition completes)
+This is critical for photo slideshows and gallery-style videos where still images are connected by decorative effects. Do NOT treat "photo + transition + photo" as a single dynamic shot.
+
 ## Output Requirements
 - **CRITICAL**: Keep JSON compact. Only include fields specified below.
 - Maximum 30 shots per video
@@ -564,6 +574,18 @@ Rules:
 - contentClass MUST be consistent with watermarkInfo.type:
   NARRATIVE → type="none" | BRAND_SPLASH → type="brand_logo" | OVERLAY_CONTENT → type="channel_watermark" | ENDCARD → type="endcard"
 - If the frame shows ONLY a logo/brand name with no human subjects or narrative action → contentClass MUST be BRAND_SPLASH.
+
+## Visual Persistence Classification (MANDATORY)
+
+For EACH shot, classify `visualPersistence`:
+- `PURE_STATIC` — Frozen image, NO motion: title cards, text, product photos, static graphics, freeze frames.
+- `STATIC_SOURCE_DYNAMIC_VIEW` — Still image with virtual camera motion (Ken Burns zoom/pan). Subject does not move.
+- `NATIVE_VIDEO` — Real motion: moving subjects, live action, animated characters.
+
+**Decorative Transition Rule** (CRITICAL for photo slideshows):
+- If a shot is a decorative transition effect between two static images (page flip, slide, wipe, dissolve, fold, curl, swipe, push, cube rotation), classify as `PURE_STATIC`. The motion is purely decorative, not narrative content. For `firstFrameDescription`, describe the DESTINATION image (after transition completes).
+- If the video is a photo slideshow / gallery, EVERY still photo = PURE_STATIC, EVERY transition = PURE_STATIC. Do NOT classify as NATIVE_VIDEO.
+- Only classify as NATIVE_VIDEO when there is REAL subject motion (people walking, talking, gesturing, animals moving, etc.).
 
 ## Shots to Analyze
 {shot_boundaries}
@@ -926,3 +948,30 @@ def _enforce_branding_classification(shots: List[Dict[str, Any]]) -> None:
                 shot["visualPersistence"] = "PURE_STATIC"
             else:
                 shot["visualPersistence"] = "NATIVE_VIDEO"
+
+    # --- Phase D: force PURE_STATIC for decorative transition shots ---
+    _TRANSITION_KEYWORDS = [
+        "page flip", "page turn", "page curl", "flip transition",
+        "slide transition", "wipe transition", "dissolve",
+        "fold transition", "curl transition", "cube rotation",
+        "swipe transition", "push transition", "card flip",
+        "photo transition", "slideshow transition", "reveals",
+        "flips to reveal", "slides to reveal", "wipes to reveal",
+        "transitions to", "flipping", "sliding away",
+    ]
+    for shot in shots:
+        if shot.get("visualPersistence") != "NATIVE_VIDEO":
+            continue
+        concrete = shot.get("concrete", {})
+        if not isinstance(concrete, dict):
+            concrete = {}
+        subject = (concrete.get("subject") or shot.get("briefSubject") or "").lower()
+        scene = (concrete.get("scene") or shot.get("briefScene") or "").lower()
+        first_frame = (concrete.get("firstFrameDescription") or "").lower()
+        dynamics = (concrete.get("dynamics") or "").lower()
+        combined = f"{subject} {scene} {first_frame} {dynamics}"
+        duration = shot.get("durationSeconds", 999)
+        if any(kw in combined for kw in _TRANSITION_KEYWORDS) and duration < 2.0:
+            shot_id = shot.get("shotId", "??")
+            print(f"🔄 [Post-process] {shot_id}: decorative transition detected (dur={duration}s) → PURE_STATIC")
+            shot["visualPersistence"] = "PURE_STATIC"
