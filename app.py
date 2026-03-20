@@ -1468,17 +1468,21 @@ def generate_storyboard_frame(
     # 🎯 Endcard early-return: preserve original frame without AI editing
     wm_type = (watermark_info or {}).get("type", "none")
     if wm_type == "endcard":
-        original_frame_path = job_dir / "frames" / f"{shot_id}.png"
-        if original_frame_path.exists():
-            # Copy original frame to storyboard directory as-is
-            import shutil
-            dst = storyboard_dir / f"{shot_id}.png"
-            shutil.copy2(str(original_frame_path), str(dst))
-            print(f"   📋 [ENDCARD] {shot_id}: end card preserved (original frame used)")
-            return f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
-        else:
-            print(f"   📋 [ENDCARD] {shot_id}: end card but no original frame found")
-            return ""
+        has_style = visual_style and visual_style.get("confirmed", False)
+        if not has_style:
+            original_frame_path = job_dir / "frames" / f"{shot_id}.png"
+            if original_frame_path.exists():
+                # Copy original frame to storyboard directory as-is
+                import shutil
+                dst = storyboard_dir / f"{shot_id}.png"
+                shutil.copy2(str(original_frame_path), str(dst))
+                print(f"   📋 [ENDCARD] {shot_id}: end card preserved (original frame used)")
+                return f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
+            else:
+                print(f"   📋 [ENDCARD] {shot_id}: end card but no original frame found")
+                return ""
+        # has remix style → fall through to normal Gemini stylization
+        print(f"   🎨 [ENDCARD] {shot_id}: remix style detected, applying stylization...")
 
     # 🎯 将 T2I prompt 中的 --ar 后缀替换为实际宽高比
     import re as _re
@@ -2138,33 +2142,48 @@ async def generate_remix_storyboard(job_id: str, background_tasks: BackgroundTas
             is_narrative = original_shot.get("isNarrative", True) and content_class not in ("BRAND_SPLASH", "ENDCARD")
             first_frame_image = None
             if not is_narrative:
-                env_ids_for_shot = applied_anchors.get("environments", [])
-                for env in identity_anchors.get("environments", []):
-                    if env.get("anchorId") in env_ids_for_shot:
-                        tv = env.get("threeViews", {})
-                        for view_type in ["wide", "detail", "alt"]:
-                            view_path = tv.get(view_type)
-                            if view_path:
-                                # Resolve relative path
-                                full_path = view_path if os.path.isabs(view_path) else str(job_dir / view_path.replace(f"jobs/{job_id}/", "")) if view_path.startswith("jobs/") else str(job_dir / "assets" / view_path)
-                                if os.path.exists(full_path):
-                                    # Copy to storyboard_frames (same dir as Gemini-generated frames)
-                                    storyboard_dir = job_dir / "storyboard_frames"
-                                    storyboard_dir.mkdir(parents=True, exist_ok=True)
-                                    dst = storyboard_dir / f"{shot_id}.png"
-                                    import shutil
-                                    shutil.copy2(full_path, str(dst))
-                                    first_frame_image = f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
-                                    print(f"   🎨 [Storyboard] {shot_id}: graphic scene — using uploaded env image directly")
-                                    break
-                        if first_frame_image:
-                            break
-                if not first_frame_image:
-                    # 无用户上传图 → 用原始帧
-                    frame_path = job_dir / "frames" / f"{shot_id}.png"
-                    if frame_path.exists():
-                        first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
-                        print(f"   ⏭️ [Storyboard] {shot_id}: graphic scene — no replacement uploaded, using original")
+                has_style = visual_style and visual_style.get("confirmed", False)
+                if has_style:
+                    # Remix style active → route through Gemini stylization
+                    first_frame_image = generate_storyboard_frame(
+                        job_dir=job_dir, job_id=job_id, shot_id=shot_id,
+                        t2i_prompt=t2i_prompt,
+                        applied_anchors=applied_anchors,
+                        identity_anchors=identity_anchors,
+                        visual_style=visual_style,
+                        watermark_info=shot_watermark_info,
+                        is_replication=is_replication,
+                        aspect_ratio=_storyboard_ar
+                    )
+                    print(f"   🎨 [Storyboard] {shot_id}: non-narrative scene — remix style applied via Gemini")
+                else:
+                    env_ids_for_shot = applied_anchors.get("environments", [])
+                    for env in identity_anchors.get("environments", []):
+                        if env.get("anchorId") in env_ids_for_shot:
+                            tv = env.get("threeViews", {})
+                            for view_type in ["wide", "detail", "alt"]:
+                                view_path = tv.get(view_type)
+                                if view_path:
+                                    # Resolve relative path
+                                    full_path = view_path if os.path.isabs(view_path) else str(job_dir / view_path.replace(f"jobs/{job_id}/", "")) if view_path.startswith("jobs/") else str(job_dir / "assets" / view_path)
+                                    if os.path.exists(full_path):
+                                        # Copy to storyboard_frames (same dir as Gemini-generated frames)
+                                        storyboard_dir = job_dir / "storyboard_frames"
+                                        storyboard_dir.mkdir(parents=True, exist_ok=True)
+                                        dst = storyboard_dir / f"{shot_id}.png"
+                                        import shutil
+                                        shutil.copy2(full_path, str(dst))
+                                        first_frame_image = f"/assets/{job_id}/storyboard_frames/{shot_id}.png"
+                                        print(f"   🎨 [Storyboard] {shot_id}: graphic scene — using uploaded env image directly")
+                                        break
+                            if first_frame_image:
+                                break
+                    if not first_frame_image:
+                        # 无用户上传图 → 用原始帧
+                        frame_path = job_dir / "frames" / f"{shot_id}.png"
+                        if frame_path.exists():
+                            first_frame_image = f"/assets/{job_id}/frames/{shot_id}.png"
+                            print(f"   ⏭️ [Storyboard] {shot_id}: graphic scene — no replacement uploaded, using original")
 
             if first_frame_image is None:
                 # 叙事镜头：走 Gemini 生成
@@ -2520,7 +2539,7 @@ Return ONLY the JSON object, no other text."""
 
     try:
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-3.1-pro-preview",
             contents=[parse_prompt],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -2586,7 +2605,7 @@ Generate an updated cinematic prompt that incorporates the requested changes whi
 Return ONLY the new prompt text, no other explanation."""
 
                     regen_response = client.models.generate_content(
-                        model="gemini-3-flash-preview",
+                        model="gemini-3.1-pro-preview",
                         contents=[regen_prompt]
                     )
                     new_prompt = regen_response.text.strip()
@@ -3387,7 +3406,7 @@ async def upload_entity_view(job_id: str, anchor_id: str, view: str, file: Uploa
             )
 
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-3.1-pro-preview",
             contents=[
                 vision_prompt,
                 genai_types.Part.from_bytes(data=img_bytes, mime_type="image/png")
@@ -4741,7 +4760,7 @@ async def retry_shot_analysis(job_id: str, request: RetryBatchRequest = None):
         try:
             import json
             response = client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[batch_prompt, uploaded_file],
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json"
@@ -4906,6 +4925,163 @@ async def delete_library_asset(asset_id: str):
         raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
     _save_asset_library(filtered)
     return {"status": "deleted", "id": asset_id}
+
+
+# ============================================================
+# Mode 2: Agent Workflow Canvas — Endpoints
+# ============================================================
+
+from sse_starlette.sse import EventSourceResponse
+from core.event_bus import agent_event_bus, agent_logger, AgentEvent
+from core.graph_model import WorkflowGraph
+from core.agent_loop import agent_loop, get_agent_state
+
+
+class AgentStartRequest(BaseModel):
+    goal: str
+    skip_gates: bool = False
+
+
+class AgentGateApproveRequest(BaseModel):
+    node_id: str
+
+
+class AgentChatV2Request(BaseModel):
+    message: str
+
+
+# Agent 后台任务追踪
+_agent_tasks: Dict[str, Any] = {}
+
+
+@app.post("/api/job/{job_id}/agent/start")
+async def start_agent(job_id: str, req: AgentStartRequest, background_tasks: BackgroundTasks):
+    """
+    启动 Agent 自动模式
+
+    创建默认 DAG 并开始执行。通过 SSE (/agent/stream) 实时推送进度。
+    """
+    job_dir = Path("jobs") / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    # 检查是否已在运行
+    if job_id in _agent_tasks and _agent_tasks[job_id].get("status") == "running":
+        return {"status": "already_running", "jobId": job_id}
+
+    _agent_tasks[job_id] = {"status": "running", "goal": req.goal}
+
+    import asyncio
+
+    async def _run():
+        try:
+            await agent_loop(
+                job_id=job_id,
+                user_goal=req.goal,
+                event_bus=agent_event_bus,
+                logger=agent_logger,
+                skip_gates=req.skip_gates,
+            )
+            _agent_tasks[job_id]["status"] = "completed"
+        except Exception as e:
+            _agent_tasks[job_id]["status"] = "failed"
+            _agent_tasks[job_id]["error"] = str(e)
+
+    # 用 asyncio.create_task 在后台运行（保持在同一个 event loop）
+    asyncio.create_task(_run())
+
+    return {
+        "status": "started",
+        "jobId": job_id,
+        "goal": req.goal,
+        "message": "Agent started. Connect to /agent/stream for realtime updates.",
+    }
+
+
+@app.get("/api/job/{job_id}/agent/stream")
+async def agent_stream(job_id: str, request: Request):
+    """
+    SSE 事件流 — 实时推送 Agent 执行状态
+
+    事件类型: graph_created, node_started, node_completed, node_failed,
+             node_retrying, gate_reached, workflow_complete, workflow_blocked, etc.
+    """
+    async def event_generator():
+        async for event in agent_event_bus.subscribe(job_id):
+            if await request.is_disconnected():
+                break
+            yield {
+                "event": event.type,
+                "data": event.to_sse(),
+            }
+
+    return EventSourceResponse(event_generator())
+
+
+@app.get("/api/job/{job_id}/agent/graph")
+async def get_agent_graph(job_id: str):
+    """获取当前 DAG 工作流状态"""
+    job_dir = Path("jobs") / job_id
+    graph = WorkflowGraph.load(job_dir)
+    if not graph:
+        raise HTTPException(status_code=404, detail="No agent graph found for this job")
+    return graph.to_dict()
+
+
+@app.post("/api/job/{job_id}/agent/approve-gate")
+async def approve_agent_gate(job_id: str, req: AgentGateApproveRequest):
+    """审批 Gate 节点，允许 Agent 继续执行"""
+    state = get_agent_state(job_id)
+    if not state.has_pending_gate(req.node_id):
+        raise HTTPException(status_code=400, detail=f"Node {req.node_id} is not waiting for approval")
+    state.approve_gate(req.node_id)
+    return {"status": "approved", "nodeId": req.node_id}
+
+
+@app.post("/api/job/{job_id}/agent/pause")
+async def pause_agent(job_id: str):
+    """暂停 Agent 执行"""
+    state = get_agent_state(job_id)
+    state.request_pause()
+    return {"status": "paused", "jobId": job_id}
+
+
+@app.post("/api/job/{job_id}/agent/resume")
+async def resume_agent(job_id: str):
+    """恢复 Agent 执行"""
+    state = get_agent_state(job_id)
+    state.request_resume()
+    return {"status": "resumed", "jobId": job_id}
+
+
+@app.get("/api/job/{job_id}/agent/log")
+async def get_agent_log(job_id: str, after: Optional[str] = None):
+    """
+    获取 Agent 事件日志
+
+    Args:
+        after: 可选时间戳，只返回此时间之后的事件（用于增量同步）
+    """
+    events = agent_logger.replay(job_id, after=after)
+    return {
+        "jobId": job_id,
+        "count": len(events),
+        "events": [e.to_dict() for e in events],
+    }
+
+
+@app.get("/api/job/{job_id}/agent/status")
+async def get_agent_status(job_id: str):
+    """获取 Agent 运行状态"""
+    task_info = _agent_tasks.get(job_id, {"status": "not_started"})
+    job_dir = Path("jobs") / job_id
+    graph = WorkflowGraph.load(job_dir)
+    return {
+        "jobId": job_id,
+        "agentStatus": task_info.get("status", "not_started"),
+        "graphStatus": graph.status if graph else None,
+        "progress": graph.get_progress() if graph else None,
+    }
 
 
 # --- 核心：防缓存中间件 ---
